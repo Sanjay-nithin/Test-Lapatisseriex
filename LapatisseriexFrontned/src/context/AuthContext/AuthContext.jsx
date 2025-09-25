@@ -573,6 +573,7 @@ export const AuthProvider = ({ children }) => {
     verifyOTP,
     updateProfile,
     updateUser,
+    updateEmailVerificationState,
     logout,
     toggleAuthPanel,
     changeAuthType,
