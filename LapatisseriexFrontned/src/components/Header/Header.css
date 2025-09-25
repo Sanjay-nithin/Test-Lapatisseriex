@@ -1,0 +1,1092 @@
+/* Header Styles */
+
+/* Apply sans-serif font to all text elements */
+.category-swiper,
+.breadcrumb,
+.header-container,
+.location-text,
+.logo-text,
+.nav-link,
+.auth-panel-closing,
+.mobile-menu {
+  font-family: sans-serif;
+}
+
+/* Special styling for the logo text */
+.header-logo-text {
+  font-family: 'Playfair Display', serif;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Cake-themed text animation for logo */
+.logo-text {
+  display: inline-block;
+  background: linear-gradient(135deg, #ffd700 0%, #ffed4e 25%, #ffd700 50%, #b8860b 75%, #ffd700 100%);
+  background-size: 300% auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmerGold 3s ease-in-out infinite;
+  text-shadow: 0px 0px 15px rgba(255, 215, 0, 0.4);
+  position: relative;
+  font-weight: bold;
+}
+
+/* Delicious pastry shimmer effect */
+@keyframes shimmerGold {
+  0%, 100% {
+    background-position: 0% 50%;
+    text-shadow: 0px 0px 8px rgba(255, 215, 0, 0.4);
+  }
+  50% {
+    background-position: 100% 50%;
+    text-shadow: 0px 0px 20px rgba(255, 215, 0, 0.7), 0px 0px 30px rgba(255, 237, 78, 0.3);
+  }
+}
+
+/* Sugar sprinkles animation for logo */
+.sugar-sprinkles {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.sprinkle {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  background: linear-gradient(45deg, #ffd700, #ffed4e, #b8860b);
+  border-radius: 50%;
+  animation: sprinkleFall 2s infinite ease-in-out;
+  opacity: 0.8;
+}
+
+@keyframes sprinkleFall {
+  0% {
+    transform: translateY(-10px) rotate(0deg);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(30px) rotate(360deg);
+    opacity: 0;
+  }
+}
+
+/* Premium Luxury Banner Styles */
+.luxury-banner-container {
+  background: linear-gradient(135deg, #000000 0%, #1a1a1a 25%, #000000 50%, #2a2a2a 75%, #000000 100%);
+  background-size: 400% 400%;
+  animation: luxuryGradientShift 8s ease-in-out infinite;
+  position: relative;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+@keyframes luxuryGradientShift {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+/* Floating cake elements */
+.floating-cake {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  background: radial-gradient(circle, rgba(255, 212, 0, 0.3) 0%, rgba(255, 212, 0, 0.1) 70%, transparent 100%);
+  border-radius: 50%;
+  animation: floatUp 6s infinite ease-in-out;
+}
+
+.floating-cake-1 {
+  left: 10%;
+  animation-delay: 0s;
+  animation-duration: 8s;
+}
+
+.floating-cake-2 {
+  left: 70%;
+  animation-delay: 2s;
+  animation-duration: 10s;
+}
+
+.floating-cake-3 {
+  left: 40%;
+  animation-delay: 4s;
+  animation-duration: 7s;
+}
+
+@keyframes floatUp {
+  0% {
+    transform: translateY(100px) rotate(0deg) scale(0.8);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.3;
+  }
+  50% {
+    transform: translateY(-50px) rotate(180deg) scale(1);
+    opacity: 0.6;
+  }
+  90% {
+    opacity: 0.3;
+  }
+  100% {
+    transform: translateY(-200px) rotate(360deg) scale(0.8);
+    opacity: 0;
+  }
+}
+
+/* Floating sparkles */
+.floating-sparkle {
+  position: absolute;
+  font-size: 16px;
+  animation: sparkleFloat 4s infinite ease-in-out;
+  pointer-events: none;
+}
+
+.floating-sparkle-1 {
+  left: 15%;
+  animation-delay: 0s;
+  animation-duration: 5s;
+}
+
+.floating-sparkle-2 {
+  left: 60%;
+  animation-delay: 1.5s;
+  animation-duration: 6s;
+}
+
+.floating-sparkle-3 {
+  left: 80%;
+  animation-delay: 3s;
+  animation-duration: 4.5s;
+}
+
+.floating-sparkle-4 {
+  left: 25%;
+  animation-delay: 2s;
+  animation-duration: 5.5s;
+}
+
+@keyframes sparkleFloat {
+  0% {
+    transform: translateY(60px) rotate(0deg) scale(0.5);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  50% {
+    transform: translateY(-30px) rotate(180deg) scale(1.2);
+    opacity: 0.8;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-120px) rotate(360deg) scale(0.5);
+    opacity: 0;
+  }
+}
+
+/* Text animation effects */
+.animate-fade-in-up {
+  animation: fadeInUp 1s ease-out forwards;
+}
+
+.animation-delay-500 {
+  animation-delay: 0.5s;
+}
+
+.animation-delay-1000 {
+  animation-delay: 1s;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.8s ease-out forwards;
+  transform-origin: center;
+}
+
+@keyframes scaleIn {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* Professional dropdown fade-in animation */
+@keyframes dropdownFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Star animation for banner */
+.star {
+  position: absolute;
+  background: #ffd700;
+  clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+  animation: starTwinkle 3s ease-in-out infinite;
+}
+
+.star-1 {
+  width: 8px;
+  height: 8px;
+  top: 20%;
+  left: 20%;
+  animation-delay: 0s;
+}
+
+.star-2 {
+  width: 6px;
+  height: 6px;
+  top: 60%;
+  right: 25%;
+  animation-delay: 1.5s;
+}
+
+@keyframes starTwinkle {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+/* Custom scrollbar for mobile menu */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(to bottom, #ffd700, #b8860b);
+  border-radius: 2px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(to bottom, #ffed4e, #ffd700);
+}
+
+/* Mega Menu Animations */
+.mega-menu-category {
+  transition: all 0.2s ease-in-out;
+}
+
+.mega-menu-category:hover {
+  transform: translateX(4px);
+}
+
+.mega-menu-image {
+  transition: all 0.3s ease-in-out;
+}
+
+.mega-menu-image:hover {
+  transform: scale(1.02);
+}
+
+/* Enhanced dropdown animation for mega menu */
+@keyframes megaMenuSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.mega-menu-dropdown {
+  animation: megaMenuSlideIn 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+/* Light golden glassmorphism effect */
+.light-golden-glass {
+  background: linear-gradient(135deg, rgba(255, 248, 220, 0.9), rgba(255, 239, 178, 0.8));
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 215, 0, 0.2);
+  box-shadow: 
+    0 8px 32px rgba(255, 215, 0, 0.15),
+    0 4px 16px rgba(255, 193, 7, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+/* Premium Navigation Item Animations */
+.nav-item {
+  position: relative;
+  padding: 8px 12px;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* Desktop Nav Item Hover Effects */
+.nav-item:hover {
+  transform: translateY(-1px);
+}
+
+.nav-item:active {
+  transform: translateY(0);
+}
+
+/* Premium Underline Animation */
+.nav-item .underline-animation {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #ffd700, transparent);
+  transform: translateX(-50%);
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.nav-item:hover .underline-animation {
+  width: 100%;
+}
+
+/* Premium Location Dropdown Animations */
+.location-dropdown {
+  animation: slideDown 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transform-origin: top center;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Premium Mobile Menu Animations */
+.mobile-menu-premium {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* Glassmorphism effects for cards and dropdowns */
+.glass-effect {
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+}
+
+/* Gold glow effect for interactive elements */
+.gold-glow:hover {
+  box-shadow: 0 0 20px rgba(255, 215, 0, 0.3), 0 0 40px rgba(255, 215, 0, 0.1);
+}
+
+/* Professional tooltip styling */
+.tooltip {
+  position: relative;
+}
+
+.tooltip .tooltip-content {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 8px;
+  padding: 6px 12px;
+  background: transparent; /* removed black background */
+  backdrop-filter: none; /* remove blur for a clean look */
+  border-radius: 6px;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.3s ease;
+  z-index: 1000;
+  white-space: nowrap;
+}
+
+.tooltip:hover .tooltip-content {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(-4px);
+}
+
+/* Premium Menu Item Hover Effects */
+.menu-item-premium {
+  position: relative;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.menu-item-premium::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+  transition: left 0.5s;
+}
+
+.menu-item-premium:hover::before {
+  left: 100%;
+}
+
+/* Premium Badge Animations */
+.premium-badge {
+  animation: pulse-premium 2s infinite;
+}
+
+@keyframes pulse-premium {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
+}
+
+/* Premium Gradient Overlays */
+.gradient-overlay {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.05) 100%);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* Premium Shadow Effects */
+.premium-shadow {
+  box-shadow: 
+    0 4px 6px -1px rgba(0, 0, 0, 0.1),
+    0 2px 4px -1px rgba(0, 0, 0, 0.06),
+    0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+.premium-shadow-lg {
+  box-shadow: 
+    0 20px 25px -5px rgba(0, 0, 0, 0.1),
+    0 10px 10px -5px rgba(0, 0, 0, 0.04),
+    0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+/* Premium Desktop Navigation */
+.desktop-nav-item {
+  position: relative;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.desktop-nav-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.desktop-nav-item::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.05));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: exclude;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.desktop-nav-item:hover::before {
+  opacity: 1;
+}
+
+/* Premium Icon Animations */
+.premium-icon {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.premium-icon:hover {
+  transform: scale(1.1) rotate(5deg);
+}
+
+/* Premium Badge Styling */
+.premium-badge {
+  background: linear-gradient(135deg, #000, #333);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: all 0.3s ease;
+}
+
+.premium-badge:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* Premium User Menu Button */
+.user-menu-button {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.user-menu-button:hover {
+  background: rgba(255, 255, 255, 0.95);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
+
+/* Mobile Location Dropdown Styles */
+@media (max-width: 768px) {
+  .mobile-location-dropdown {
+    max-width: calc(100vw - 2rem);
+    left: 0;
+    right: auto;
+    position: fixed !important;
+    z-index: 999 !important; /* Ensure highest z-index */
+  }
+  
+  .mobile-location-button {
+    font-size: 0.75rem;
+    padding: 4px 8px;
+    position: relative;
+    z-index: 60;
+  }
+  
+  .mobile-location-button .truncate {
+    max-width: 120px;
+  }
+  
+  /* Mobile header is now always sticky */
+  header.fixed {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 50;
+    transform: translate3d(0, 0, 0) !important;
+  }
+  
+  /* Remove old header hiding behavior */
+  header.fixed.header-hidden {
+    transform: translate3d(0, 0, 0) !important;
+  }
+  
+  /* Location bar hide animation with height collapse */
+  .mobile-location-bar {
+    transition: max-height 0.3s ease-out, padding 0.3s ease-out;
+    will-change: max-height, padding;
+  }
+  
+  /* Category swiper positioning based on location bar visibility */
+  .category-swiper-container {
+    transition: top 0.3s ease-out;
+    z-index: 30; /* Below header (z-50) but above content */
+    margin-top: 8px; /* Additional spacing from header */
+  }
+  
+  /* When location bar is hidden, adjust category swiper position for mobile */
+  @media (max-width: 767px) {
+    body.hide-location-bar .category-swiper-container {
+      top: 98px !important; /* Height of header without location bar + some spacing */
+    }
+  }
+  
+  @media (min-width: 768px) {
+    body.hide-location-bar .category-swiper-container {
+      top: 130px !important; /* Desktop height remains same */
+    }
+  }
+  
+  @media (min-width: 768px) {
+    body.hide-location-bar .category-swiper-container {
+      top: 120px !important; /* Desktop height remains same as location bar is not visible on desktop */
+    }
+  }
+  
+  /* Layout padding adjustments for all pages */
+  main {
+    padding-top: 130px;
+    transition: padding-top 0.3s ease-out;
+  }
+  
+  @media (max-width: 767px) {
+    body.hide-location-bar main {
+      padding-top: 75px; /* Adequate padding when location bar is hidden on mobile */
+    }
+    
+    main {
+      padding-top: 75px !important; /* Consistent mobile padding to prevent overlap */
+    }
+  }
+  
+  @media (min-width: 768px) {
+    main {
+      padding-top: 130px;
+    }
+    
+    body.hide-location-bar main {
+      padding-top: 130px; /* No change on desktop */
+    }
+  }
+  
+  /* Dynamic padding based on header visibility */
+  @media (max-width: 767px) {
+    body.scrolling-down main {
+      padding-top: 75px !important;
+      transition: padding-top 0.2s ease;
+    }
+    
+    body.scrolling-up main {
+      padding-top: 75px !important;
+      transition: padding-top 0.2s ease;
+    }
+    
+    body:not(.scrolled) main {
+      padding-top: 75px !important;
+      transition: padding-top 0.2s ease;
+    }
+  }
+  
+  /* Ensure proper header height calculation */
+  body.has-fixed-header {
+    --header-height-mobile: 75px; /* Adequate height to prevent overlap */
+  }
+  
+  /* When header slides up, reduce spacing */
+  body.has-fixed-header.header-hidden {
+    --header-height-mobile: 88px; /* Height without location bar */
+  }
+}
+
+/* Dropdown Animation */
+@keyframes dropdownFadeIn {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-dropdown {
+  animation: dropdownFadeIn 0.3s ease-out forwards;
+}
+
+/* Custom Scrollbar for Dropdown */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 2px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(to bottom, #64748b, #475569);
+  border-radius: 2px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(to bottom, #475569, #334155);
+}
+
+/* Banner with Stars Effect */
+.banner-container {
+  background: linear-gradient(135deg, rgba(107, 114, 128, 0.6) 0%, rgba(156, 163, 175, 0.4) 30%, rgba(243, 244, 246, 0.8) 60%, rgba(255, 255, 255, 0.9) 80%, transparent 100%);
+  position: relative;
+  backdrop-filter: blur(1px);
+}
+
+.stars-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.star {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  background: rgba(107, 114, 128, 0.8);
+  border-radius: 50%;
+  animation: bounce 2s ease-in-out infinite;
+  box-shadow: 0 0 4px rgba(107, 114, 128, 0.6);
+}
+
+.star-1 {
+  top: 20%;
+  left: 15%;
+  animation-delay: 0s;
+}
+
+.star-2 {
+  top: 60%;
+  right: 20%;
+  animation-delay: 1s;
+}
+
+@keyframes bounce {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+    opacity: 0.6;
+  }
+  50% {
+    transform: translateY(-8px) scale(1.1);
+    opacity: 0.9;
+  }
+}
+
+/* Add subtle pulse to banner text */
+.banner-container p {
+  animation: textGlow 3s ease-in-out infinite;
+}
+
+@keyframes textGlow {
+  0%, 100% {
+    text-shadow: 0 0 3px rgba(107, 114, 128, 0.3);
+  }
+  50% {
+    text-shadow: 0 0 8px rgba(107, 114, 128, 0.5);
+  }
+}
+
+/* Selected category styling */
+.selected-category img {
+  border: 2px solid black;
+}
+
+.selected-category span {
+  font-weight: 500;
+}
+
+/* Sugar sprinkles animation for cake logo text - removed hover behavior */
+.sugar-sprinkles {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.sprinkle {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background-color: #FF85A1; /* pink */
+  opacity: 0;
+  animation: sprinkleAnimation 2s ease-out forwards;
+}
+
+.sprinkle:nth-child(2n) {
+  background-color: #FFC94B; /* yellow */
+  animation-delay: 0.2s;
+}
+
+.sprinkle:nth-child(3n) {
+  background-color: #91D6F2; /* blue */
+  animation-delay: 0.3s;
+}
+
+.sprinkle:nth-child(4n) {
+  background-color: #BFF2B0; /* green */
+  animation-delay: 0.1s;
+}
+
+@keyframes sprinkleAnimation {
+  0% {
+    transform: translateY(0) scale(0);
+    opacity: 1;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-20px) scale(1);
+    opacity: 0;
+  }
+}
+
+/* Padding is now handled in Layout.jsx directly */
+
+/* Fix for mobile location dropdown positioning */
+@media (max-width: 768px) {
+  .location-dropdown-container {
+    position: relative !important;
+    z-index: 999 !important;
+  }
+  
+  .location-dropdown-container > div {
+    position: fixed !important;
+    top: auto;
+    left: 0;
+    width: 80vw;
+    max-width: 300px;
+    z-index: 999 !important;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.15) !important;
+  }
+}
+
+/* Fix for category swiper issues */
+.category-swiper {
+  position: relative;
+  z-index: 5;
+  width: 100%;
+  overflow: visible;
+  touch-action: pan-y;
+}
+
+/* Prevent jittering/shaking during scrolling */
+.category-swiper .swiper-wrapper {
+  transform: translate3d(0,0,0);
+  backface-visibility: hidden;
+  perspective: 1000px;
+  will-change: transform;
+  transition-timing-function: ease-out;
+}
+
+/* Add consistent sizing for swiper slides */
+.category-swiper .swiper-slide {
+  height: auto;
+  flex-shrink: 0;
+}
+
+/* Breadcrumb styles */
+.breadcrumb {
+  margin-top: 10px;
+  font-family: sans-serif;
+}
+
+/* Auth transitions */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideIn {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+/* Login button hover effect */
+button:has(.h-5.w-5.mr-1):hover .h-5.w-5.mr-1 {
+  transform: scale(1.1);
+}
+
+/* Auth panel closing state */
+.auth-panel-closing .fixed.inset-0.bg-black {
+  transition: opacity 500ms ease-in-out;
+  opacity: 0;
+}
+
+.auth-panel-closing .fixed.top-0.right-0.h-full.bg-white {
+  transition: transform 500ms ease-in-out;
+  transform: translateX(100%);
+}
+
+/* Responsive header styles */
+@media (max-width: 640px) {
+  .header-container {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+    font-family: sans-serif;
+  }
+  
+  /* Smaller text for mobile */
+  .header-logo-text {
+    font-size: 1rem;
+    font-family: sans-serif;
+  }
+  
+  /* Adjust category swiper on mobile */
+  .category-swiper .swiper-slide {
+    width: 60px !important;
+  }
+}
+
+/* Premium Mobile menu slide-in animation */
+.mobile-menu-overlay {
+  transition: opacity 400ms cubic-bezier(0.4, 0, 0.2, 1);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.mobile-menu {
+  transition: transform 400ms cubic-bezier(0.4, 0, 0.2, 1);
+  font-family: sans-serif;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* Premium Mobile Menu Content */
+.mobile-menu-content {
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* Premium Menu Items */
+.mobile-nav-item {
+  position: relative;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.mobile-nav-item:hover {
+  transform: translateX(2px);
+}
+
+/* Premium Section Dividers */
+.section-divider {
+  background: linear-gradient(90deg, rgba(156, 163, 175, 0.3) 0%, rgba(156, 163, 175, 0.1) 50%, transparent 100%);
+  height: 1px;
+}
+
+/* Fix for small screens */
+@media (max-width: 360px) {
+  .location-text {
+    max-width: 100px;
+    font-family: sans-serif;
+  }
+  
+  .logo-text {
+    max-width: 90px;
+    font-family: sans-serif;
+  }
+}
+
+/* Improved hover effects */
+.nav-link {
+  position: relative;
+  font-family: sans-serif;
+}
+
+.nav-link::after {
+  content: '';
+  position: absolute;
+  width: 0;
+  height: 2px;
+  bottom: -2px;
+  left: 0;
+  background-color: black;
+  transition: width 0.3s ease;
+}
+
+.nav-link:hover::after {
+  width: 100%;
+}
+
+/* Animated mobile menu */
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+/* Ensure fixed header doesn't create layout issues */
+header.fixed {
+  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+  font-family: sans-serif;
+}
+
+/* Add space below header for content */
+body {
+  padding-top: var(--header-height, 0px);
+}
+
+/* Handle orientation changes */
+@media (orientation: landscape) and (max-height: 500px) {
+  .mobile-menu {
+    overflow-y: auto;
+    font-family: sans-serif;
+  }
+}
+
+/* Simple tooltip utility for icon hovers */
+.tooltip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tooltip .tooltip-content {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translate(-50%, 4px) scale(0.98);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 150ms ease, transform 150ms ease, visibility 150ms ease;
+  z-index: 60; /* above header internals */
+}
+
+.tooltip:hover .tooltip-content {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0) scale(1);
+}
+
+/* Disable hover tooltips on touch devices */
+@media (hover: none) {
+  .tooltip .tooltip-content {
+    display: none !important;
+  }
+}
