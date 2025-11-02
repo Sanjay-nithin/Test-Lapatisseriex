@@ -335,13 +335,8 @@ export const apiGet = async (url, options = {}) => {
 // ============================================================================
 const getEmailApiUrl = () => {
   const vercelUrl = import.meta.env?.VITE_VERCEL_API_URL;
-  const renderUrl = import.meta.env?.VITE_API_URL;
-  
-  // Use Vercel for email services, fallback to Render if not configured
-  const emailApiUrl = (vercelUrl && vercelUrl.trim()) || (renderUrl && renderUrl.trim()) || API_URL;
-  
-  console.log(`📧 [Email API Config] Using: ${emailApiUrl} | Vercel URL: ${vercelUrl || 'not set'} | Render URL: ${renderUrl || 'not set'}`);
-  return emailApiUrl.replace(/\/$/, ''); // Remove trailing slash
+  console.log(`📧 [Email API Config] Using: ${vercelUrl}`);
+  return vercelUrl;
 };
 
 // ============================================================================

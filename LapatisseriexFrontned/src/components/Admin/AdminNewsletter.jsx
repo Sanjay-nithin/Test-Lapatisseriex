@@ -51,7 +51,7 @@ const AdminNewsletter = () => {
   const [sending, setSending] = useState(false);
   
   const API_URL = import.meta.env.VITE_API_URL;
-  const VERCEL_URL = import.meta.env.VERCEL_AI_URL;
+  const VERCEL_URL = import.meta.env.VITE_VERCEL_API_URL;
   
   // Fetch subscribers
   const fetchSubscribers = async () => {

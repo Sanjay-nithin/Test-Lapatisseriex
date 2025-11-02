@@ -29,7 +29,7 @@ const auth = getAuth(app);
 
 // Backend API URL from environment variable
 const API_URL = import.meta.env.VITE_API_URL;
-const VERCEL_URL = import.meta.env.VERCEL_API_URL;
+const VERCEL_URL = import.meta.env.VITE_VERCEL_API_URL;
 
 // Initialize Google Auth Provider
 const googleProvider = new GoogleAuthProvider();

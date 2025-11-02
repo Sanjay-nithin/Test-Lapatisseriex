@@ -20,9 +20,8 @@ import NGOSidePanel from './NGOSidePanel';
 // Email API URL for Vercel (order confirmation and payment success emails)
 const getEmailApiUrl = () => {
   const vercelUrl = import.meta.env?.VITE_VERCEL_API_URL;
-  const renderUrl = import.meta.env?.VITE_API_URL;
-  console.log(`📧 [Payment Email API] Using: ${(vercelUrl && vercelUrl.trim()) || (renderUrl && renderUrl.trim()) || '/api'}`);
-  return (vercelUrl && vercelUrl.trim()) || (renderUrl && renderUrl.trim()) || '/api';
+  console.log(`📧 [Payment Email API] Using: ${vercelUrl}`);
+  return vercelUrl;
 };
 
 const AUTO_REDIRECT_STORAGE_KEY = 'lapatisserie_payment_redirect';
