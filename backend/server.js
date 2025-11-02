@@ -41,6 +41,7 @@ import publicRoutes from './routes/publicRoutes.js';
 import ngoMediaRoutes from './routes/ngoMediaRoutes.js';
 import sitemapRoutes from './routes/sitemapRoutes.js';
 import freeProductRoutes from './routes/freeProductRoutes.js';
+import testEmailRoutes from './routes/testEmailRoutes.js';
 import { calculateShopStatus } from './utils/shopStatus.js';
 
 // Initialize Express app
@@ -313,6 +314,10 @@ const startServer = async () => {
   
   // Public routes (no rate limiting needed for static assets)
   app.use('/api/public', publicRoutes);
+  
+  // Test email route (NO AUTH - for testing only!)
+  // ⚠️ WARNING: Remove this in production!
+  app.use('/api/test-email', testEmailRoutes);
 
   // Routes - only set up after DB connection is established
   // Apply the DB readiness gate to API routes
