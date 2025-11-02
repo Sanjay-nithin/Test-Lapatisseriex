@@ -312,6 +312,8 @@ const cartSlice = createSlice({
       .addCase(fetchCart.pending, (state) => {
         state.isLoading = true;
         state.error = null;
+        // DON'T clear items array - keep existing items to prevent flickering
+        // Items will be updated when fulfilled
       })
       .addCase(fetchCart.fulfilled, (state, action) => {
         state.isLoading = false;
@@ -397,9 +399,10 @@ const cartSlice = createSlice({
           }
         }
 
-        // If server returned full cart but not a single item, replace state from server payload
+        // If server returned full cart but not a single item, sync with server payload
         if (!item && Array.isArray(items)) {
-          state.items = items.map(srvItem => ({
+          // Map server items with proper format
+          const mappedItems = items.map(srvItem => ({
             id: srvItem._id,
             productId: srvItem.productId,
             name: srvItem.productDetails.name,
@@ -410,6 +413,18 @@ const cartSlice = createSlice({
             productDetails: srvItem.productDetails,
             isFreeProduct: srvItem.isFreeProduct || false
           }));
+          
+          // Only update if items actually changed to reduce re-renders
+          const itemsChanged = state.items.length !== mappedItems.length ||
+            state.items.some((item, idx) => 
+              item.productId !== mappedItems[idx]?.productId ||
+              item.quantity !== mappedItems[idx]?.quantity
+            );
+          
+          if (itemsChanged) {
+            state.items = mappedItems;
+          }
+          
           state.cartTotal = cartTotal;
           state.cartCount = cartCount;
           state.isOptimisticLoading = false;

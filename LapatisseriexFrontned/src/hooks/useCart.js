@@ -298,10 +298,20 @@ export const useCart = () => {
   }, [cartItems, user, saveToLocalStorage]);
 
   // Optional: refetch cart when tab regains focus to stay in sync across devices
+  // Throttled to prevent excessive calls
   useEffect(() => {
     if (!user) return;
+    let lastFetchTime = 0;
+    const THROTTLE_MS = 5000; // Only refetch if 5 seconds have passed since last fetch
+    
     const onFocus = () => {
+      const now = Date.now();
+      if (now - lastFetchTime < THROTTLE_MS) {
+        console.log('🛒 Skipping cart refetch - too soon since last fetch');
+        return;
+      }
       try {
+        lastFetchTime = now;
         dispatch(fetchCart());
       } catch {}
     };
@@ -559,7 +569,8 @@ export const useCart = () => {
   }, [dispatch]);
 
   // Computed values
-  const isEmpty = cartItems.length === 0;
+  // Don't mark cart as empty if it's loading - prevents "no products" error during fetch
+  const isEmpty = !isLoading && cartItems.length === 0;
   const hasItems = cartItems.length > 0;
   
   const cartSummary = useMemo(() => ({

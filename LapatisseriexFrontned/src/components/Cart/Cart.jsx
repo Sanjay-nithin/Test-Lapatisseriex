@@ -84,7 +84,7 @@ const deriveEggStatus = (productLike) => {
 
 const Cart = () => {
   const { isOpen, checkShopStatusNow } = useShopStatus();
-  const { cartItems, updateQuantity, removeFromCart, pendingOperations, getCartItem, refreshCart } = useCart();
+  const { cartItems, updateQuantity, removeFromCart, pendingOperations, getCartItem, refreshCart, isLoading, dbCartLoaded } = useCart();
   
   // Use our hooks
   const { user } = useAuth();
@@ -103,13 +103,26 @@ const Cart = () => {
   const removedRef = useRef(new Set());
   const EXPIRY_SECONDS_DEFAULT = Number(import.meta.env.VITE_CART_EXPIRY_SECONDS || 86400); // 24 hours default
 
-  // Fetch fresh cart data when component mounts
+  // Don't fetch cart on mount - cart is already fetched when user logs in
+  // and kept in sync via middleware. Fetching here causes flickering by clearing
+  // optimistic updates before the add-to-cart API call completes.
+  // The cart data is always fresh from:
+  // 1. Initial load in useCart hook when user logs in
+  // 2. Automatic updates after each cart operation
+  // 3. Window focus refetch (throttled to 5 seconds)
+  // 
+  // Only refresh if explicitly needed (e.g., after a failed operation)
+  // or if cart wasn't loaded yet (edge case)
   useEffect(() => {
-    if (user) {
-      console.log('🛒 Cart component mounted, fetching fresh cart data...');
+    // Only fetch if cart was never loaded for this user
+    if (user && !dbCartLoaded && !isLoading) {
+      console.log('🛒 Cart not loaded yet, fetching...');
       refreshCart();
+    } else if (user && dbCartLoaded) {
+      console.log('🛒 Cart component mounted, using existing cart data from Redux');
     }
-  }, [user, refreshCart]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
