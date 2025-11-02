@@ -1,9 +1,20 @@
+import { useSelector } from 'react-redux';
+import { makeSelectListByKey, makeSelectLoadingByKey, selectHasBestSellers } from '../../redux/productsSlice';
 import ProductCard from "../Products/ProductCard";
+import RollingGallery from "../common/RollingGallery";
+import './gridResponsive.css';
 import DessertLoader from "../common/DessertLoader";
 
 // BestSellers.jsx
-const BestSellers = ({ products, loading = false }) => {
-  if (loading || !products || products.length === 0) {
+const BestSellers = () => {
+  const selectProducts = makeSelectListByKey('bestSellers');
+  const selectLoading = makeSelectLoadingByKey('bestSellers');
+  const products = useSelector(selectProducts);
+  const loading = useSelector(selectLoading);
+  const hasBestSellers = useSelector(selectHasBestSellers);
+
+  // Show loading state
+  if (loading) {
     return (
       <section className="w-full py-0 md:py-6">
         <div className="max-w-screen-xl mx-auto pt-6 pb-6 md:pt-0 md:pb-0">
@@ -16,28 +27,33 @@ const BestSellers = ({ products, loading = false }) => {
     );
   }
 
+  // Don't render anything if there are no best sellers
+  if (!hasBestSellers || !products || products.length === 0) {
+    return null;
+  }
+
   return (
-    <section className="w-full py-0 md:py-6">
-      <div className="max-w-screen-xl mx-auto px-4 pt-6 pb-6 md:pt-0 md:pb-0">
-        <div className="mb-8 space-y-3">
-          <h2 className="text-2xl font-bold tracking-wide text-left" style={{ 
-            background: 'linear-gradient(135deg, #e0a47d 0%, #c17e5b 100%)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            textShadow: '0px 0px 1px rgba(224, 164, 125, 0.2)'
-          }}>
+    <section className="w-full bg-white">
+      <div className="max-w-screen-2xl mx-auto px-3 sm:px-4">
+        <div className="mb-8">
+          <h2 className="text-2xl font-light tracking-wide text-center md:text-center text-[#733857]" style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}>
             Best Sellers
           </h2>
-        
+          <p className="text-sm sm:text-base text-center md:text-center text-gray-600 mt-2 font-light">
+            Our most loved creations
+          </p>
         </div>
         
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
-          {products.map(product => (
-            <div key={product._id}>
-              <ProductCard product={product} />
-            </div>
-          ))}
-        </div>
+      <RollingGallery 
+          items={products.map(product => ({
+            key: product._id,
+            content: (
+              <div className="min-w-0 w-full flex transform transition-all duration-300 ease-out hover:scale-102 focus:scale-102 active:scale-98">
+                <ProductCard product={product} className="min-w-0 w-full  transition-shadow" />
+              </div>
+            )
+          }))}
+        />
       </div>
     </section>
   );

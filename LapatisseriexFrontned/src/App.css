@@ -1,5 +1,8 @@
 /* App.css */
 
+/* Import auth styles */
+@import './styles/auth.css';
+
 /* Fix for header overlay */
 .homepage-container {
   position: relative;
@@ -23,9 +26,7 @@ main {
 }
 
 /* Enhance global styling */
-:root {
-  scroll-behavior: smooth;
-}
+/* Removed scroll-behavior: smooth to prevent conflicts with product page navigation */
 
 body {
   overflow-x: hidden;

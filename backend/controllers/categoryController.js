@@ -4,6 +4,8 @@ import Product from '../models/productModel.js';
 import { deleteFromCloudinary, getPublicIdFromUrl } from '../utils/cloudinary.js';
 import { cache } from '../utils/cache.js';
 import { removeBackground } from '../utils/backgroundRemoval.js';
+import { sendNewCategoryNewsletter } from '../utils/newsletterEmailService.js';
+
 
 // @desc    Get all categories
 // @route   GET /api/categories
@@ -12,16 +14,22 @@ export const getCategories = asyncHandler(async (req, res) => {
   // Filter options
   const filter = {};
   
+  // Always exclude the special images category from regular category lists
+  filter.name = { $ne: '__SPECIAL_IMAGES__' };
+  
   // Add isActive filter if specified
+  let isActive = 'true'; // Default value
   if (req.query.isActive !== undefined) {
     // If isActive query param is explicitly 'all', don't filter by active status
     if (req.query.isActive.toLowerCase() === 'all') {
       // No filter needed, include both active and inactive
       console.log('Returning all categories (active and inactive)');
+      isActive = 'all';
     } else {
       // Otherwise, filter by the boolean value
       filter.isActive = req.query.isActive === 'true';
       console.log(`Filtering categories by isActive=${filter.isActive}`);
+      isActive = req.query.isActive;
     }
   } else {
     // Default to active categories only if not specified
@@ -29,8 +37,23 @@ export const getCategories = asyncHandler(async (req, res) => {
     console.log('Default: Returning active categories only');
   }
   
+  // Create a cache key based on the filter
+  const cacheKey = `categories-${isActive}`;
+  
+  // Try to get from cache first (valid for 5 minutes)
+  const cachedCategories = cache.get(cacheKey);
+  if (cachedCategories) {
+    console.log(`Returning ${cachedCategories.length} cached categories for filter: ${isActive}`);
+    return res.status(200).json(cachedCategories);
+  }
+  
+  // If not in cache, fetch from database
   const categories = await Category.find(filter).sort('name');
   console.log(`Found ${categories.length} categories matching filter:`, filter);
+  
+  // Store in cache for 5 minutes (300 seconds)
+  cache.set(cacheKey, categories, 300);
+  
   res.status(200).json(categories);
 });
 
@@ -106,6 +129,14 @@ export const createCategory = asyncHandler(async (req, res) => {
     description,
     images: processedImages.length > 0 ? processedImages : images || [],
     videos: videos || []
+  });
+
+  // Clear cache after creating category to ensure fresh data on next fetch
+  cache.clear();
+  
+  // Send newsletter to all subscribers about new category (async, don't wait)
+  sendNewCategoryNewsletter(category).catch(err => {
+    console.error('Failed to send new category newsletter:', err);
   });
   
   res.status(201).json(category);
@@ -211,6 +242,10 @@ export const updateCategory = asyncHandler(async (req, res) => {
   
   // Save updated category
   const updatedCategory = await category.save();
+  
+  // Clear cache after updating category to ensure fresh data on next fetch
+  cache.clear();
+  
   res.status(200).json(updatedCategory);
 });
 
@@ -218,53 +253,93 @@ export const updateCategory = asyncHandler(async (req, res) => {
 // @route   DELETE /api/categories/:id
 // @access  Admin only
 export const deleteCategory = asyncHandler(async (req, res) => {
-  const category = await Category.findById(req.params.id);
-  
-  if (!category) {
-    res.status(404);
-    throw new Error('Category not found');
-  }
-  
-  // Check if there are products using this category
-  const productCount = await Product.countDocuments({ category: req.params.id });
-  
-  if (productCount > 0) {
-    res.status(400);
-    throw new Error(`Cannot delete category. ${productCount} products are using this category.`);
-  }
-  
-  // Delete all images and videos from Cloudinary
-  const imagesToDelete = [...category.images];
-  const videosToDelete = [...category.videos];
-  
-  // Delete images from Cloudinary
-  for (const imageUrl of imagesToDelete) {
-    const publicId = getPublicIdFromUrl(imageUrl);
-    if (publicId) {
-      try {
-        await deleteFromCloudinary(publicId);
-      } catch (error) {
-        console.error(`Failed to delete image ${publicId}:`, error);
+  try {
+    console.log(`Attempting to delete category with ID: ${req.params.id}`);
+    
+    const category = await Category.findById(req.params.id);
+    
+    if (!category) {
+      console.log(`Category not found with ID: ${req.params.id}`);
+      res.status(404);
+      throw new Error('Category not found');
+    }
+
+    console.log(`Found category: ${category.name}, checking for dependent products...`);
+    
+    // Check if there are products using this category
+    const productCount = await Product.countDocuments({ category: req.params.id });
+    
+    if (productCount > 0) {
+      console.log(`Cannot delete category ${category.name}: ${productCount} products are using it`);
+      res.status(400);
+      throw new Error(`Cannot delete category. ${productCount} products are using this category.`);
+    }
+
+    console.log(`Category ${category.name} has no dependent products, proceeding with deletion...`);
+    
+    // Delete all images and videos from Cloudinary
+    const imagesToDelete = [...(category.images || [])];
+    const videosToDelete = [...(category.videos || [])];
+    
+    console.log(`Images to delete: ${imagesToDelete.length}, Videos to delete: ${videosToDelete.length}`);
+    
+    // Delete images from Cloudinary
+    for (const imageUrl of imagesToDelete) {
+      const publicId = getPublicIdFromUrl(imageUrl);
+      if (publicId) {
+        try {
+          console.log(`Deleting category image: ${publicId}`);
+          await deleteFromCloudinary(publicId);
+        } catch (error) {
+          console.error(`Failed to delete category image ${publicId}:`, error);
+          // Continue with deletion even if Cloudinary fails
+        }
       }
     }
-  }
-  
-  // Delete videos from Cloudinary
-  for (const videoUrl of videosToDelete) {
-    const publicId = getPublicIdFromUrl(videoUrl);
-    if (publicId) {
-      try {
-        await deleteFromCloudinary(publicId, { resource_type: 'video' });
-      } catch (error) {
-        console.error(`Failed to delete video ${publicId}:`, error);
+    
+    // Delete videos from Cloudinary
+    for (const videoUrl of videosToDelete) {
+      const publicId = getPublicIdFromUrl(videoUrl);
+      if (publicId) {
+        try {
+          console.log(`Deleting category video: ${publicId}`);
+          await deleteFromCloudinary(publicId, { resource_type: 'video' });
+        } catch (error) {
+          console.error(`Failed to delete category video ${publicId}:`, error);
+          // Continue with deletion even if Cloudinary fails
+        }
       }
     }
+    
+    console.log('Starting category database deletion...');
+    
+    // Delete the category
+    await category.deleteOne();
+    
+    console.log(`Category ${req.params.id} deleted successfully`);
+    
+    // Clear cache after deleting category to ensure fresh data on next fetch
+    cache.clear();
+    
+    res.status(200).json({ message: 'Category removed successfully' });
+    
+  } catch (error) {
+    console.error(`Error deleting category ${req.params.id}:`, error);
+    
+    // More specific error handling
+    if (error.name === 'CastError') {
+      res.status(400);
+      throw new Error('Invalid category ID format');
+    }
+    
+    if (error.name === 'ValidationError') {
+      res.status(400);
+      throw new Error('Validation error during deletion');
+    }
+    
+    // Re-throw the error to be handled by asyncHandler
+    throw error;
   }
-  
-  // Delete the category
-  await category.deleteOne();
-  
-  res.status(200).json({ message: 'Category removed successfully' });
 });
 
 // @desc    Get products by category
@@ -354,6 +429,10 @@ export const updateSpecialImage = asyncHandler(async (req, res) => {
     await specialCategory.save();
     console.log(`Special category updated with ${type} image: ${processedImageUrl}`);
 
+    // Clear the special images cache
+    cache.del('special-images');
+    console.log('📸 Cleared special images cache after update');
+
     // Delete the old image from Cloudinary if it exists
     if (currentImage) {
       const publicId = getPublicIdFromUrl(currentImage);
@@ -383,7 +462,16 @@ export const updateSpecialImage = asyncHandler(async (req, res) => {
 // @route   GET /api/categories/special-images
 // @access  Public
 export const getSpecialImages = asyncHandler(async (req, res) => {
-  console.log('Fetching special category images...');
+  // Check cache first
+  const cacheKey = 'special-images';
+  const cachedResult = cache.get(cacheKey);
+  
+  if (cachedResult) {
+    console.log('📸 Returning cached special images');
+    return res.status(200).json(cachedResult);
+  }
+  
+  console.log('📸 Fetching special category images from database...');
   
   try {
     const specialCategory = await Category.findOne({ name: '__SPECIAL_IMAGES__' });
@@ -433,7 +521,11 @@ export const getSpecialImages = asyncHandler(async (req, res) => {
       }
     };
     
-    console.log('Returning special images:', result);
+    // Cache the result for 15 minutes instead of 5 to reduce database calls
+    // These special images don't change often so longer cache is acceptable
+    cache.set(cacheKey, result, 900);
+    
+    console.log('📸 Returning special images:', result);
     res.status(200).json(result);
   } catch (error) {
     console.error('Error fetching special images:', error);
@@ -476,6 +568,10 @@ export const deleteSpecialImage = asyncHandler(async (req, res) => {
     // Remove from database
     specialCategory.specialImages[type] = null;
     await specialCategory.save();
+
+    // Clear the special images cache
+    cache.del('special-images');
+    console.log('📸 Cleared special images cache after deletion');
 
     res.status(200).json({
       message: `${type} image deleted successfully`,

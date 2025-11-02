@@ -1,12 +1,14 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { useAuth } from '../../context/AuthContext/AuthContext';
-import { useCart } from '../../context/CartContext';
+
+import { useAuth } from '../../hooks/useAuth';
+
+import { useCart } from '../../hooks/useCart';
 import { 
   Home, 
   Utensils, 
   ShoppingCart, 
-  Heart, 
+  Package, 
   User,Cake 
 } from 'lucide-react';
 
@@ -15,8 +17,10 @@ const BottomNavigation = () => {
   const { user, toggleAuthPanel } = useAuth();
   const { cartCount } = useCart();
 
-  // Don't show on admin pages
-  if (location.pathname.startsWith('/admin')) {
+  // Don't show on admin, profile, or payment pages
+  if (location.pathname.startsWith('/admin') || 
+      location.pathname === '/profile' || 
+      location.pathname === '/payment') {
     return null;
   }
 
@@ -32,6 +36,7 @@ const BottomNavigation = () => {
       id: 'home',
       label: 'Home',
       icon: Home,
+      imageSrc: '/homemobile.png',
       path: '/',
       isActive: location.pathname === '/'
     },
@@ -39,6 +44,7 @@ const BottomNavigation = () => {
       id: 'menu',
       label: 'Menu',
       icon: Cake,
+      imageSrc: '/food.png',
       path: '/products',
       isActive: location.pathname === '/products'
     },
@@ -46,21 +52,29 @@ const BottomNavigation = () => {
       id: 'cart',
       label: 'Cart',
       icon: ShoppingCart,
+      imageSrc: '/ice-cream-cart.png',
       path: '/cart',
       badge: cartCount > 0 ? cartCount : null,
       isActive: location.pathname === '/cart'
     },
     {
-      id: 'favorites',
-      label: 'Favorites',
-      icon: Heart,
-      path: '/favorites',
-      isActive: location.pathname === '/favorites'
+      id: 'orders',
+      label: 'Orders',
+      icon: Package,
+      imageSrc: '/cupcake.png',
+      path: '/orders',
+      isActive: location.pathname === '/orders',
+      requiresAuth: !user,
+      onClick: !user ? (e) => {
+        e.preventDefault();
+        toggleAuthPanel();
+      } : null
     },
     {
       id: 'profile',
       label: user ? 'Profile' : 'Login',
       icon: User,
+      imageSrc: '/yummy.png',
       path: user ? '/profile' : '/',
       isActive: location.pathname === '/profile',
       requiresAuth: !user,
@@ -81,30 +95,40 @@ const BottomNavigation = () => {
               onClick={item.onClick}
               className={`flex flex-col items-center justify-center px-2 py-1 transition-all duration-200 relative ${
                 item.isActive 
-                  ? 'text-yellow-600' 
-                  : 'text-gray-500 hover:text-gray-700'
+                  ? 'text-[#733857]' 
+                  : 'text-gray-600 hover:text-gray-800'
               }`}
-              style={{ fontFamily: 'sans-serif' }}
+              style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}
             >
               <div className="relative">
-                <IconComponent 
-                  className={`h-5 w-5 transition-all duration-200 ${
-                    item.isActive ? 'text-yellow-500' : 'text-gray-500'
-                  }`} 
-                />
+                {item.imageSrc ? (
+                  <img 
+                    src={item.imageSrc} 
+                    alt={item.label}
+                    className={`h-5 w-5 transition-all duration-200 ${
+                      item.isActive ? 'opacity-100' : 'opacity-60'
+                    }`}
+                  />
+                ) : (
+                  <IconComponent 
+                    className={`h-5 w-5 transition-all duration-200 ${
+                      item.isActive ? 'text-[#733857]' : 'text-gray-600'
+                    }`}
+                  />
+                )}
                 {item.badge && (
-                  <div className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center font-medium">
+                  <div className="absolute -top-2 -right-2 bg-gradient-to-r from-[#733857] to-[#281c20] text-white text-xs rounded-full h-4 w-4 flex items-center justify-center font-light">
                     {item.badge > 99 ? '99+' : item.badge}
                   </div>
                 )}
               </div>
-              <span className={`text-xs mt-1 font-medium ${
-                item.isActive ? 'text-yellow-600' : 'text-gray-500'
+              <span className={`text-xs mt-1 font-light ${
+                item.isActive ? 'text-[#733857]' : 'text-gray-600'
               }`}>
                 {item.label}
               </span>
               {item.isActive && (
-                <div className="absolute top-0 left-1/2 transform -translate-x-1/2 w-8 h-0.5 bg-yellow-600 rounded-full"></div>
+                <div className="absolute top-0 left-1/2 transform -translate-x-1/2 w-8 h-0.5 bg-[#733857] rounded-full"></div>
               )}
             </Link>
           );

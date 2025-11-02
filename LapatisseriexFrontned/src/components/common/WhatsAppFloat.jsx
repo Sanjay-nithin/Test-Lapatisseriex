@@ -1,19 +1,61 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 
 const WhatsAppFloat = () => {
+  const { pathname } = useLocation();
+  const [footerVisible, setFooterVisible] = useState(false);
+  const observerRef = useRef(null);
+
   const handleWhatsAppClick = () => {
     window.open('https://wa.me/917845712388', '_blank', 'noopener,noreferrer');
   };
 
+  // Observe footer visibility
+  useEffect(() => {
+    const footerEl = document.querySelector('footer');
+    if (!('IntersectionObserver' in window) || !footerEl) {
+      setFooterVisible(false);
+      return;
+    }
+
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        setFooterVisible(!!entry?.isIntersecting);
+      },
+      { root: null, threshold: 0.05 }
+    );
+
+    observerRef.current.observe(footerEl);
+    return () => {
+      if (observerRef.current && footerEl) {
+        observerRef.current.unobserve(footerEl);
+      }
+      observerRef.current = null;
+    };
+  }, [pathname]);
+
+  // Allowed pages where WhatsApp should be available regardless of footer
+  const isAllowedRoute = (
+    pathname === '/checkout' ||
+    pathname === '/payment' ||
+    pathname === '/orders' ||
+    pathname.startsWith('/orders/')
+  );
+
+  const shouldShow = isAllowedRoute || footerVisible;
+
+  if (!shouldShow) return null;
+
   return (
     <button
       onClick={handleWhatsAppClick}
-      className="fixed bottom-20 right-4 z-50 lg:hidden bg-green-500 hover:bg-green-600 text-white w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition-all duration-300 hover:scale-110 animate-pulse"
+      className="fixed bottom-24 md:bottom-5 right-4 z-40 bg-green-500 hover:bg-green-600 text-white w-12 h-12 md:w-14 md:h-14 rounded-full flex items-center justify-center shadow-lg transition-all duration-300 hover:scale-110"
       style={{ backgroundColor: '#25D366' }}
       aria-label="Contact us on WhatsApp"
     >
       <svg 
-        className="w-7 h-7" 
+        className="w-6 h-6 md:w-7 md:h-7" 
         fill="currentColor" 
         viewBox="0 0 24 24"
       >

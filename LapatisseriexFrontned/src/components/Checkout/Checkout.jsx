@@ -1,209 +1,613 @@
-import React, { useState, useEffect } from 'react';
-import { useAuth } from '../../context/AuthContext/AuthContext';
-import { Mail, Phone, User, MapPin, ChevronRight, CheckCircle, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+
+import { useCart } from '../../hooks/useCart';
+import { useLocation } from '../../context/LocationContext/LocationContext';
+import { useHostel } from '../../context/HostelContext/HostelContext';
+import { calculatePricing, calculateCartTotals, formatCurrency } from '../../utils/pricingUtils';
+import { resolveOrderItemVariantLabel } from '../../utils/variantUtils';
+import OfferBadge from '../common/OfferBadge';
+import AnimatedButton from '../common/AnimatedButton';
+import MaskButton from '../common/MaskButton';
+import CubeButton from '../common/CubeButton';
+import { getOrderExperienceInfo } from '../../utils/orderExperience';
+import {
+  Mail,
+  Phone,
+  User,
+  MapPin,
+  ChevronRight,
+  ChevronLeft,
+  CheckCircle,
+  AlertCircle,
+  ShoppingBag,
+  Package,
+  Building,
+  Edit2,
+  Save,
+  X,
+} from 'lucide-react';
+
+import { useAuth } from '../../hooks/useAuth';
+import axios from 'axios';
+import { toast } from 'react-toastify';
+
 
 const Checkout = () => {
-  const { user } = useAuth();
-  const [email, setEmail] = useState(user?.email || '');
-  // email verification removed
-  const [error, setError] = useState('');
-  const [step, setStep] = useState(1); // 1: User Info, 2: Payment, 3: Confirmation
+  const { user, getCurrentUser, updateUser } = useAuth();
+  const { cartItems, cartTotal, cartCount, isEmpty } = useCart();
+  const { locations, loading: locationsLoading, updateUserLocation, getCurrentLocationName } = useLocation();
+  const { hostels, loading: hostelsLoading, fetchHostelsByLocation, clearHostels } = useHostel();
+  const navigate = useNavigate();
 
-  // Effect to check if email verification is needed
+  const orderExperience = useMemo(() => getOrderExperienceInfo(user), [user]);
+
+  const [email, setEmail] = useState(user?.email || '');
+  const [error, setError] = useState('');
+  const [step, setStep] = useState(1); // 1: User Info, 2: Ready for Payment
+  
+  // Edit mode states
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [editName, setEditName] = useState(user?.name || '');
+  const [editLocationId, setEditLocationId] = useState(user?.location?._id || '');
+  const [editHostelId, setEditHostelId] = useState(user?.hostel?._id || '');
+  const [saving, setSaving] = useState(false);
+
+  // Update local state when user data changes
   useEffect(() => {
-    // Email verification flow removed; no-op
+    if (user) {
+      setEditName(user.name || '');
+      setEditLocationId(user.location?._id || '');
+      setEditHostelId(user.hostel?._id || '');
+      setEmail(user.email || '');
+    }
   }, [user]);
 
-  // Handle proceed to payment - require verified email
+  // Fetch hostels when location changes in edit mode
+  useEffect(() => {
+    if (isEditMode && editLocationId) {
+      fetchHostelsByLocation(editLocationId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editLocationId, isEditMode]);
+
+  const getVariantDetails = (item) => {
+    const prod = item?.productDetails || item?.product || item || {};
+    const variants = Array.isArray(prod?.variants)
+      ? prod.variants
+      : Array.isArray(item?.variants)
+        ? item.variants
+        : [];
+
+    const variantIndex = Number.isInteger(item?.productDetails?.variantIndex)
+      ? item.productDetails.variantIndex
+      : Number.isInteger(item?.variantIndex)
+        ? item.variantIndex
+        : 0;
+
+    const variantFromArray = variants?.[variantIndex];
+    const selectedVariant = item?.productDetails?.selectedVariant || item?.selectedVariant || variantFromArray || item?.variant;
+
+    const variantLabel = resolveOrderItemVariantLabel({
+      ...item,
+      variants,
+      variantIndex,
+      variant: item?.variant || selectedVariant,
+      selectedVariant,
+      variantLabel: item?.variantLabel || prod?.variantLabel
+    });
+
+    return {
+      variantIndex,
+      variant: item?.variant || selectedVariant || variantFromArray || null,
+      variantLabel
+    };
+  };
+
+  // Fetch hostels for current user location on mount (only once)
+  useEffect(() => {
+    if (user?.location?._id) {
+      fetchHostelsByLocation(user.location._id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.location?._id]);
+
+  // Redirect if cart is empty
+  useEffect(() => {
+    if (isEmpty) {
+      setError('Your cart is empty. Add some items before proceeding to checkout.');
+    }
+  }, [isEmpty]);
+
+  // Handle save changes
+  const handleSaveChanges = async () => {
+    try {
+      setSaving(true);
+      setError('');
+
+      if (!editName.trim()) {
+        setError('Name cannot be empty');
+        setSaving(false);
+        return;
+      }
+
+      if (!editLocationId) {
+        setError('Please select a delivery location');
+        setSaving(false);
+        return;
+      }
+
+      if (!editHostelId) {
+        setError('Please select a hostel');
+        setSaving(false);
+        return;
+      }
+
+      // Update user name, location, and hostel in one API call
+      const authToken = localStorage.getItem('authToken');
+      const response = await axios.put(
+        `${import.meta.env.VITE_API_URL}/users/${user.uid}`,
+        { 
+          name: editName.trim(),
+          location: editLocationId,
+          hostel: editHostelId 
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+          },
+        }
+      );
+
+      // Get the full location and hostel objects
+      const selectedLocation = locations.find(loc => loc._id === editLocationId);
+      const selectedHostel = hostels.find(h => h._id === editHostelId);
+
+      // Immediately update Redux store for instant UI update across all components
+      if (updateUser) {
+        updateUser({
+          ...user,
+          name: editName.trim(),
+          location: selectedLocation || editLocationId,
+          hostel: selectedHostel || editHostelId
+        });
+      }
+
+      // Also update location in LocationContext for immediate UI update
+      await updateUserLocation(editLocationId);
+
+      // Refresh user data from server to ensure everything is in sync
+      // This will update Redux store with the server response
+      await getCurrentUser();
+
+      toast.success('Information updated successfully!');
+      setIsEditMode(false);
+    } catch (error) {
+      console.error('Error updating user information:', error);
+      setError(error.response?.data?.message || 'Failed to update information. Please try again.');
+      toast.error('Failed to update information');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Handle cancel edit
+  const handleCancelEdit = () => {
+    setEditName(user?.name || '');
+    setEditLocationId(user?.location?._id || '');
+    setEditHostelId(user?.hostel?._id || '');
+    setIsEditMode(false);
+    setError('');
+  };
+
   const handleProceedToPayment = () => {
-    // Proceed without email verification requirement
     if (!email) {
       setError('Please enter your email address before proceeding');
       return;
     }
     
-    setStep(2);
-  };
-
-  // Handle email input change
-  const handleEmailChange = (e) => {
-    const value = e.target.value;
-    setEmail(value);
+    // Debug logging
+    console.log('Validation check - User object:', user);
+    console.log('User location:', user?.location);
+    console.log('User hostel:', user?.hostel);
     
-    // No verification flow; hide component
-  // email verification removed
+    // Validate location selection
+    if (!user?.location || !user.location._id) {
+      setError('Please select your delivery location from your profile before proceeding');
+      return;
+    }
+    
+    // Validate hostel selection - check for both existence and valid data
+    if (!user?.hostel || !user.hostel._id || !user.hostel.name) {
+      setError('Please select your hostel from your profile before proceeding to payment');
+      return;
+    }
+    
+    setError('');
+    // Navigate to payment page
+    navigate('/payment');
   };
 
+  const handleEmailChange = (e) => {
+    setEmail(e.target.value);
+  };
+  console.log(user);
   return (
-    <div className="max-w-4xl mx-auto py-8 px-4">
-      <h1 className="text-3xl font-bold mb-6">Checkout</h1>
-      
-      {/* Progress Steps */}
-      <div className="flex items-center justify-center mb-8">
-        <div className={`flex items-center ${step >= 1 ? 'text-blue-600' : 'text-gray-400'}`}>
-          <div className={`rounded-full h-8 w-8 flex items-center justify-center border-2 ${step >= 1 ? 'border-blue-600 bg-blue-50' : 'border-gray-300'}`}>
-            1
-          </div>
-          <span className="ml-2">User Info</span>
+    <div className="min-h-screen bg-gray-25" style={{ fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif', backgroundColor: '#fafafa' }}>
+      <div className="max-w-7xl mx-auto px-4 py-8">
+        {/* Back to Cart */}
+        <div className="mb-6">
+          <Link 
+            to="/cart" 
+            className="inline-flex items-center gap-2 text-[#733857] hover:text-[#8d4466] transition-colors duration-200"
+          >
+            <ChevronLeft size={20} />
+            <span className="font-medium">Back to Cart</span>
+          </Link>
         </div>
-        <div className={`w-12 h-1 mx-2 ${step >= 2 ? 'bg-blue-600' : 'bg-gray-300'}`}></div>
-        <div className={`flex items-center ${step >= 2 ? 'text-blue-600' : 'text-gray-400'}`}>
-          <div className={`rounded-full h-8 w-8 flex items-center justify-center border-2 ${step >= 2 ? 'border-blue-600 bg-blue-50' : 'border-gray-300'}`}>
-            2
-          </div>
-          <span className="ml-2">Payment</span>
-        </div>
-        <div className={`w-12 h-1 mx-2 ${step >= 3 ? 'bg-blue-600' : 'bg-gray-300'}`}></div>
-        <div className={`flex items-center ${step >= 3 ? 'text-blue-600' : 'text-gray-400'}`}>
-          <div className={`rounded-full h-8 w-8 flex items-center justify-center border-2 ${step >= 3 ? 'border-blue-600 bg-blue-50' : 'border-gray-300'}`}>
-            3
-          </div>
-          <span className="ml-2">Confirmation</span>
-        </div>
-      </div>
 
-      {/* Error message */}
-      {error && (
-        <div className="mb-6 bg-red-50 border border-red-200 rounded-md p-4">
-          <div className="flex items-center">
-            <AlertCircle className="text-red-500 mr-2" size={20} />
-            <p className="text-red-800">{error}</p>
-          </div>
-        </div>
-      )}
 
-      {/* User Info Step */}
-      {step === 1 && (
-        <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
-          <h2 className="text-xl font-semibold mb-4">User Information</h2>
-          
-          <div className="space-y-4">
-            {/* Name */}
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-gray-700">
-                Name <span className="text-red-500">*</span>
-              </label>
-              <div className="relative">
-                <User className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-                <input
-                  type="text"
-                  value={user?.name || ''}
-                  readOnly
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-700"
-                />
-              </div>
+        {/* If cart is empty */}
+        {isEmpty ? (
+          <div className="max-w-xl mx-auto text-center space-y-6">
+            <div className="mx-auto flex h-24 w-24 items-center justify-center border border-[#733857]/20">
+              <Package className="w-10 h-10 text-[#733857]" />
             </div>
-
-            {/* Phone */}
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-gray-700">
-                Phone <span className="text-red-500">*</span>
-              </label>
-              <div className="relative">
-                <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-                <input
-                  type="text"
-                  value={user?.phone || ''}
-                  readOnly
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-700"
-                />
-              </div>
-            </div>
-
-            {/* Email */}
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-gray-700">
-                Email <span className="text-red-500">*</span>
-              </label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-                <input
-                  type="email"
-                  value={email}
-                  onChange={handleEmailChange}
-                  placeholder="Enter your email address"
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-black focus:border-transparent"
-                />
-                {/* email verification badge removed */}
-              </div>
-            </div>
-            
-            {/* Email verification removed */}
-            
-            {/* Location */}
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-gray-700">
-                Delivery Location <span className="text-red-500">*</span>
-              </label>
-              <div className="relative">
-                <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-                <input
-                  type="text"
-                  value={user?.location?.name || 'Not set'}
-                  readOnly
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-700"
-                />
-              </div>
-            </div>
-            
-            {/* Proceed button */}
-            <div className="pt-4">
-              <button
-                onClick={handleProceedToPayment}
-                className={`w-full flex items-center justify-center gap-2 py-3 px-4 rounded-md bg-black hover:bg-gray-800 text-white font-medium`}
-              >
-                Proceed to Payment
-                <ChevronRight size={18} />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      
-      {/* Payment Step - Simplified for demonstration */}
-      {step === 2 && (
-        <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
-          <h2 className="text-xl font-semibold mb-4">Payment</h2>
-          <p className="text-gray-600 mb-4">
-            Payment processing would be implemented here.
-          </p>
-          <div className="flex gap-4">
-            <button
-              onClick={() => setStep(1)}
-              className="py-2 px-4 border border-gray-300 rounded-md hover:bg-gray-50"
-            >
-              Back
-            </button>
-            <button
-              onClick={() => setStep(3)}
-              className="py-2 px-4 bg-black text-white rounded-md hover:bg-gray-800"
-            >
-              Complete Payment
-            </button>
-          </div>
-        </div>
-      )}
-      
-      {/* Confirmation Step */}
-      {step === 3 && (
-        <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
-          <div className="flex flex-col items-center justify-center py-8">
-            <div className="rounded-full bg-green-100 p-4 mb-4">
-              <CheckCircle className="text-green-600" size={48} />
-            </div>
-            <h2 className="text-2xl font-bold mb-2">Order Confirmed!</h2>
-            <p className="text-gray-600 mb-6">
-              A confirmation email has been sent to {email}
+            <h2 className="text-3xl font-light tracking-wide text-[#733857]">
+              Your cart is empty
+            </h2>
+            <p className="text-sm text-[#733857]/70 max-w-md mx-auto">
+              Add some delicious items before heading to checkout.
             </p>
             <button
-              onClick={() => window.location.href = '/'}
-              className="py-2 px-6 bg-black text-white rounded-md hover:bg-gray-800"
+              onClick={() => (window.location.href = '/products')}
+              className="inline-flex items-center justify-center gap-2 border border-[#733857] px-6 py-3 text-sm font-medium tracking-wide text-[#733857] transition-colors duration-300 hover:bg-[#733857] hover:text-white"
             >
-              Continue Shopping
+              Browse Products
             </button>
           </div>
-        </div>
-      )}
+        ) : (
+          /* Two-column layout - Mobile: Products above, Desktop: Side by side */
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            
+            {/* Order Summary - Shows FIRST on mobile, SECOND on desktop */}
+            <div className="order-1 lg:order-2 lg:sticky lg:top-4 h-fit border-none shadow-none">
+              <div className="p-8 border-none shadow-none">
+                <div className="flex items-center justify-between mb-8">
+                  <h2 className="text-xl font-semibold text-[#733857]">Order Summary</h2>
+                  <span
+                    className="text-sm font-semibold tracking-wide"
+                    style={{ color: orderExperience.color, fontFamily: 'system-ui, -apple-system, sans-serif' }}
+                  >
+                    {orderExperience.label}
+                  </span>
+                </div>
+
+                {/* Cart Items */}
+                <div className="space-y-6 mb-8 max-h-96 overflow-y-auto pt-2 pr-2">
+                  {cartItems.map((item) => {
+                    const { variant, variantLabel } = getVariantDetails(item);
+                    const fallbackLabel = (() => {
+                      const opts = item.options || item.productDetails?.options || {};
+                      const weight = opts.weight || item.productDetails?.weight || item.productDetails?.variant?.weight || '';
+                      const flavor = opts.flavor || item.productDetails?.flavor || '';
+                      const parts = [];
+                      if (weight) parts.push(weight);
+                      if (flavor) parts.push(flavor);
+                      return parts.length ? parts.join(' • ') : '';
+                    })();
+
+                    const displayLabel = variantLabel || fallbackLabel || 'Standard';
+                    const pricing = variant ? calculatePricing(variant) : null;
+                    const itemQuantity = Number(item.quantity || 0);
+                    
+                    // Free products should have 0 price
+                    const rawUnitPrice = item.isFreeProduct ? 0 : (pricing ? pricing.finalPrice : Number(item?.price) || 0);
+                    const safeUnitPrice = Number.isFinite(rawUnitPrice) ? rawUnitPrice : 0;
+                    const mrpValue = item.isFreeProduct ? 0 : (pricing ? pricing.mrp : rawUnitPrice);
+                    const safeMrp = Number.isFinite(mrpValue) ? mrpValue : safeUnitPrice;
+                    const discountPercentage = Number.isFinite(pricing?.discountPercentage) ? pricing.discountPercentage : 0;
+                    const hasDiscount = discountPercentage > 0;
+                    const itemTotal = safeUnitPrice * itemQuantity;
+                    const originalTotal = hasDiscount ? safeMrp * itemQuantity : itemTotal;
+
+                    return (
+                      <div key={item.id} className="flex items-start gap-4">
+                        <div className="relative flex-shrink-0">
+                          <img
+                            src={item.image}
+                            alt={item.name}
+                            className="w-16 h-16 object-cover rounded-xl"
+                          />
+                          <span className="absolute -top-2 -right-2 bg-[#733857] text-white text-xs font-medium min-w-[20px] h-5 px-1.5 flex items-center justify-center rounded-full">
+                            {item.quantity}
+                          </span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <p className="text-sm font-normal text-gray-900">
+                              {item.name}
+                            </p>
+                            {item.isFreeProduct && (
+                              <span className="bg-green-500 text-white text-xs font-bold px-2 py-0.5 rounded">
+                                FREE
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-sm text-gray-500">
+                            {displayLabel}
+                          </p>
+                          {hasDiscount && !item.isFreeProduct && (
+                            <div className="mt-1">
+                              <OfferBadge label={`${discountPercentage}% OFF`} className="text-[10px]" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-sm font-normal text-gray-900 whitespace-nowrap text-right">
+                          {hasDiscount && (
+                            <div className="text-xs text-gray-500 line-through">
+                              ₹{originalTotal.toFixed(2)}
+                            </div>
+                          )}
+                          <div>
+                            {Number.isFinite(itemTotal) ? `₹${itemTotal.toFixed(2)}` : '₹0.00'}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Price Breakdown */}
+                <div className="border-t border-gray-200 pt-4 space-y-3">
+                  {(() => {
+                    const totals = calculateCartTotals(cartItems);
+                    
+                    return (
+                      <>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-700">Subtotal · {cartItems.length} {cartItems.length === 1 ? 'item' : 'items'}</span>
+                          <span className="text-gray-900">{formatCurrency(totals.originalTotal > 0 ? totals.originalTotal : totals.finalTotal)}</span>
+                        </div>
+                        {totals.totalSavings > 0 && (
+                          <div className="flex justify-between text-sm items-center">
+                            <div className="flex items-center gap-2">
+                              <span className="text-gray-700">Discount</span>
+                              {totals.averageDiscountPercentage > 0 && (
+                                <OfferBadge label={`${totals.averageDiscountPercentage}% OFF`} className="text-[10px]" />
+                              )}
+                            </div>
+                            <span className="text-green-600 font-normal">-{formatCurrency(totals.totalSavings)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-700">Delivery</span>
+                          <span className="text-gray-600">Calculated at next step</span>
+                        </div>
+                        <div className="flex justify-between text-base pt-2 border-t border-gray-200">
+                          <span className="font-semibold text-gray-900">Total</span>
+                          <div className="text-right">
+                            <div className="text-xs text-gray-500 mb-0.5">INR</div>
+                            <div className="text-xl font-semibold text-gray-900">{formatCurrency(totals.finalTotal)}</div>
+                          </div>
+                        </div>
+                      
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+
+            {/* Contact & Delivery Information - Shows SECOND on mobile, FIRST on desktop */}
+            <div className="order-2 lg:order-1 bg-white p-8 space-y-8 rounded-xl shadow-sm border border-gray-100">
+              {/* Error message */}
+              {error && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                  <div className="flex items-center">
+                    <AlertCircle className="text-red-500 mr-2" size={20} />
+                    <p className="text-red-800">{error}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Contact Information */}
+              <div className="bg-transparent p-0 shadow-none border-b border-gray-100 pb-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-xl font-semibold text-[#733857]">Contact Information</h2>
+                  {!isEditMode && (
+                    <CubeButton
+                      onClick={() => setIsEditMode(true)}
+                    >
+                      Edit
+                    </CubeButton>
+                  )}
+                </div>
+                
+                {/* Phone */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-[#733857] mb-2">
+                    Phone number
+                  </label>
+                  <input
+                    type="text"
+                    value={user?.phone || ''}
+                    readOnly
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-white text-gray-900"
+                  />
+                </div>
+
+                {/* Email */}
+                <div>
+                  <label className="block text-sm font-medium text-[#733857] mb-2">
+                    Email address
+                  </label>
+                  <input
+                    type="email"
+                    value={user?.email || email}
+                    readOnly
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-white text-gray-900"
+                  />
+                </div>
+              </div>
+
+              {/* Delivery */}
+              <div className="bg-transparent p-0 shadow-none">
+                <h2 className="text-lg font-semibold text-[#733857] mb-4">Delivery</h2>
+                
+                {/* Name */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-[#733857] mb-2">
+                    Full Name
+                  </label>
+                  <input
+                    type="text"
+                    value={isEditMode ? editName : user?.name || ''}
+                    onChange={(e) => setEditName(e.target.value)}
+                    readOnly={!isEditMode}
+                    className={`w-full px-4 py-3 border border-gray-300 rounded-lg ${
+                      isEditMode 
+                        ? 'bg-white text-gray-900 focus:ring-2 focus:ring-[#733857] focus:border-transparent' 
+                        : 'bg-white text-gray-900'
+                    }`}
+                  />
+                </div>
+
+                {/* Location */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-[#733857] mb-2">
+                    Delivery Location
+                  </label>
+                  {isEditMode ? (
+                    <select
+                      value={editLocationId}
+                      onChange={(e) => setEditLocationId(e.target.value)}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-white text-gray-900 focus:ring-2 focus:ring-[#733857] focus:border-transparent"
+                    >
+                      <option value="">Select a location</option>
+                      {locationsLoading ? (
+                        <option disabled>Loading locations...</option>
+                      ) : (
+                        locations.map((location) => (
+                          <option key={location._id} value={location._id}>
+                            {location.area}, {location.city} - {location.pincode}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={(() => {
+                        const locationName = getCurrentLocationName();
+                        if (locationName === "Select Location" || locationName === "Location Loading...") {
+                          if (user?.location) {
+                            if (typeof user.location === 'object' && user.location.area) {
+                              return `${user.location.area}, ${user.location.city}`;
+                            } else if (typeof user.location === 'string' && locations.length > 0) {
+                              const loc = locations.find(l => l._id === user.location);
+                              return loc ? `${loc.area}, ${loc.city}` : 'Not set';
+                            }
+                          }
+                          return 'Not set';
+                        }
+                        return locationName;
+                      })()}
+                      readOnly
+                      className={`w-full px-4 py-3 border border-gray-300 rounded-lg bg-white text-gray-900 ${!user?.location ? 'border-red-300' : ''}`}
+                    />
+                  )}
+                  {!user?.location && !isEditMode && (
+                    <p className="text-sm text-red-600 mt-1">
+                      Please set your delivery location before proceeding
+                    </p>
+                  )}
+                </div>
+
+                {/* Hostel */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-[#733857] mb-2">
+                    Hostel/Residence
+                  </label>
+                  {isEditMode ? (
+                    <select
+                      value={editHostelId}
+                      onChange={(e) => setEditHostelId(e.target.value)}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-white text-gray-900 focus:ring-2 focus:ring-[#733857] focus:border-transparent"
+                    >
+                      <option value="">Select a hostel</option>
+                      {hostelsLoading ? (
+                        <option disabled>Loading hostels...</option>
+                      ) : hostels.length === 0 ? (
+                        <option disabled>No hostels available for this location</option>
+                      ) : (
+                        hostels.map((hostel) => (
+                          <option key={hostel._id} value={hostel._id}>
+                            {hostel.name}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={user?.hostel?.name || 'Not set'}
+                      readOnly
+                      className={`w-full px-4 py-3 border border-gray-300 rounded-lg bg-white text-gray-900 ${!user?.hostel ? 'border-red-300' : ''}`}
+                    />
+                  )}
+                  {!user?.hostel && !isEditMode && (
+                    <p className="text-sm text-red-600 mt-1">
+                      Please set your hostel before proceeding
+                    </p>
+                  )}
+                </div>
+
+                {/* Edit Mode Buttons */}
+                {isEditMode && (
+                  <div className="flex gap-4 pt-4 items-center justify-center">
+                    <CubeButton
+                      onClick={handleCancelEdit}
+                      disabled={saving}
+                      variant="cancel-variant"
+                      style={{ 
+                        width: '120px',
+                        height: '40px'
+                      }}
+                    >
+                      Cancel
+                    </CubeButton>
+                    <CubeButton
+                      onClick={handleSaveChanges}
+                      disabled={saving}
+                      variant="save-variant"
+                      style={{ 
+                        width: '140px',
+                        height: '40px'
+                      }}
+                    >
+                      {saving ? 'Saving...' : 'Save'}
+                    </CubeButton>
+                  </div>
+                )}
+              </div>
+
+              {/* Proceed Button */}
+              <MaskButton
+                onClick={handleProceedToPayment}
+                disabled={isEditMode || saving}
+                maskType="nature"
+                style={{
+                  width: '100%',
+                  fontFamily: 'system-ui, -apple-system, sans-serif'
+                }}
+              >
+                {isEditMode ? 'Save changes to proceed' : 'Continue to Payment'}
+              </MaskButton>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

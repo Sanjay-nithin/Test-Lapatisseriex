@@ -1,227 +1,159 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 const AdvertisementBanner = () => {
-  // === STATE & REFS (ALL TOP-LEVEL) ===
   const [currentSlide, setCurrentSlide] = useState(0);
-  const [isTransitioning, setIsTransitioning] = useState(false);
-  const [videoEnded, setVideoEnded] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
-  const [touchStart, setTouchStart] = useState(null);
-  const [touchEnd, setTouchEnd] = useState(null);
-  const [isPaused, setIsPaused] = useState(false);
-  const [preloadedImages, setPreloadedImages] = useState(new Set());
-  const [bannerSlides, setBannerSlides] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  const videoRef = useRef(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [startX, setStartX] = useState(0);
+  const [currentX, setCurrentX] = useState(0);
+  const [isAutoPlaying, setIsAutoPlaying] = useState(true);
+  const advertisements = [
+    { id: 1, type: 'image', src: '/jk.png' },
+    { id: 2, type: 'image', src: '/images/Brown.png' },
+    { id: 3, type: 'image', src: '/images/Yellow and Brown Organic Abstract Food YouTube Thumbnail.png' },
+  ];
   const intervalRef = useRef(null);
-  const bannerRef = useRef(null);
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
-  const minSwipeDistance = 50;
-
-  // === FETCH BANNERS ===
+  // Auto-play functionality
   useEffect(() => {
-    const fetchBanners = async () => {
-      try {
-        setLoading(true);
-        const response = await fetch(`${API_URL}/banners`);
-        if (response.ok) {
-          const data = await response.json();
-          console.log('🎯 Banner API Response:', data);
-          console.log('🎯 Banners received:', data.banners);
-          setBannerSlides(data.banners || []);
-        } else {
-          console.error('🚨 Failed to fetch banners, status:', response.status);
-          // fallback
-          setBannerSlides([fallbackBanner()]);
-        }
-      } catch {
-        setBannerSlides([fallbackBanner()]);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchBanners();
-  }, []);
-
-  // === PRELOAD IMAGES ===
-  useEffect(() => {
-    bannerSlides.forEach(slide => {
-      if (slide.type === 'image' && !preloadedImages.has(slide.src)) {
-        const img = new Image();
-        img.onload = () => setPreloadedImages(prev => new Set([...prev, slide.src]));
-        img.src = slide.src;
-      }
-    });
-  }, [bannerSlides, preloadedImages]);
-
-  // === DETECT MOBILE ===
-  useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth <= 768 || /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent));
-    };
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
-
-  // === AUTO-PLAY SLIDES ===
-  useEffect(() => {
-    if (!bannerSlides.length) return;
-    if (intervalRef.current) clearInterval(intervalRef.current);
-
-    intervalRef.current = setInterval(() => {
-      if (!isPaused && !isTransitioning && bannerSlides.length > 0) {
-        const currentBanner = bannerSlides[currentSlide];
-        // Only auto-advance for image banners, let videos play naturally
-        if (currentBanner.type === 'image') goToNextSlide();
-      }
-    }, 3000);
-
-    return () => clearInterval(intervalRef.current);
-  }, [currentSlide, isPaused, isTransitioning, isMobile, bannerSlides]);
-
-  // === HANDLERS ===
-  const goToNextSlide = () => {
-    if (isTransitioning) return;
-    setIsTransitioning(true);
-    setVideoEnded(false);
-    setTimeout(() => {
-      setCurrentSlide((prev) => (prev + 1) % bannerSlides.length);
-      setTimeout(() => setIsTransitioning(false), 100);
-    }, 600);
-  };
-
-  const goToPrevSlide = () => {
-    if (isTransitioning) return;
-    setIsTransitioning(true);
-    setVideoEnded(false);
-    setTimeout(() => {
-      setCurrentSlide((prev) => (prev - 1 + bannerSlides.length) % bannerSlides.length);
-      setTimeout(() => setIsTransitioning(false), 100);
-    }, 600);
-  };
-
-  const handleVideoEnd = () => {
-    setVideoEnded(true);
-    goToNextSlide();
-  };
-
-  const onTouchStart = (e) => {
-    setTouchEnd(null);
-    setTouchStart(e.targetTouches[0].clientX);
-    setIsPaused(true);
-  };
-
-  const onTouchMove = (e) => {
-    setTouchEnd(e.targetTouches[0].clientX);
-  };
-
-  const onTouchEnd = () => {
-    if (!touchStart || !touchEnd) {
-      setIsPaused(false);
-      return;
+    if (isAutoPlaying && advertisements.length > 1) {
+      intervalRef.current = setInterval(() => {
+        setCurrentSlide((prev) => (prev + 1) % advertisements.length);
+      }, 4000);
     }
-    const distance = touchStart - touchEnd;
-    if (distance > minSwipeDistance) goToNextSlide();
-    else if (distance < -minSwipeDistance) goToPrevSlide();
-    setIsPaused(false);
+    return () => clearInterval(intervalRef.current);
+  }, [isAutoPlaying, advertisements.length]);
+
+  // Touch start
+  const handleTouchStart = (e) => {
+    setIsDragging(true);
+    setStartX(e.touches[0].clientX);
+    setIsAutoPlaying(false);
   };
 
-  // === FALLBACK BANNER ===
-  const fallbackBanner = () => ({
-    _id: 'fallback',
-    type: 'video',
-    src: '/fallback.mp4',
-    title: 'La Patisserie',
-    subtitle: 'Sweet Perfection Awaits',
-    description: 'Discover our exquisite collection of handcrafted desserts',
-    leftContent: { features: ['Authentic French Techniques','Premium Ingredients','Artisan Crafted Daily'] },
-  });
+  const handleTouchMove = (e) => {
+    if (!isDragging) return;
+    setCurrentX(e.touches[0].clientX);
+  };
 
-  // === RENDER LOADING / EMPTY ===
-  if (loading) return <BannerLoading />;
-  if (!bannerSlides.length) return <BannerEmpty />;
+  const handleTouchEnd = () => {
+    if (!isDragging) return;
+    const diff = currentX - startX;
+    const threshold = 50;
+    if (Math.abs(diff) > threshold) {
+      setCurrentSlide((prev) =>
+        diff > 0 ? (prev - 1 + advertisements.length) % advertisements.length : (prev + 1) % advertisements.length
+      );
+    }
+    setIsDragging(false);
+    setIsAutoPlaying(true);
+  };
 
-  const currentBanner = bannerSlides[currentSlide];
-  
-  console.log('🎬 Current banner being rendered:', currentBanner);
-  console.log('🎬 Banner type:', currentBanner?.type);
-  console.log('🎬 Banner src:', currentBanner?.src);
+  // Mouse drag (for desktop)
+  const handleMouseDown = (e) => {
+    setIsDragging(true);
+    setStartX(e.clientX);
+    setIsAutoPlaying(false);
+  };
+
+  const handleMouseMove = (e) => {
+    if (!isDragging) return;
+    setCurrentX(e.clientX);
+  };
+
+  const handleMouseUp = () => {
+    if (!isDragging) return;
+    const diff = currentX - startX;
+    const threshold = 50;
+    if (Math.abs(diff) > threshold) {
+      setCurrentSlide((prev) =>
+        diff > 0 ? (prev - 1 + advertisements.length) % advertisements.length : (prev + 1) % advertisements.length
+      );
+    }
+    setIsDragging(false);
+    setIsAutoPlaying(true);
+  };
 
   return (
-    <div 
-      ref={bannerRef} 
-      className="relative w-full h-[60vh] md:h-[70vh] lg:h-[80vh] overflow-hidden select-none"
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
+    <div
+      className="relative w-full overflow-hidden select-none bg-white"
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={() => setIsDragging(false)}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
     >
-      {/* Background Media */}
-      {currentBanner.type === 'video' ? (
-        <video
-          ref={videoRef}
-          className="w-full h-full object-cover"
-          autoPlay
-          muted
-          playsInline
-          loop={isMobile}
-          controls={false}
-          controlsList="nodownload nofullscreen noremoteplayback"
-          disablePictureInPicture
-          poster="/placeholder.jpg"
-          key={`video-${currentSlide}`}
-          onEnded={handleVideoEnd}
-          style={{ outline: 'none', backgroundColor: '#000', transition: 'opacity 800ms ease-in-out' }}
-        >
-          <source src={currentBanner.src} type="video/mp4" />
-        </video>
-      ) : (
-        <div
-          className="w-full h-full bg-cover bg-center"
-          style={{ 
-            backgroundImage: `url(${currentBanner.src})`,
-            backgroundColor: '#000',
-            opacity: preloadedImages.has(currentBanner.src) ? 1 : 0,
-            transition: 'opacity 800ms ease-in-out'
-          }}
-          key={`image-${currentSlide}`}
-        />
-      )}
-
-      {/* Overlay & Content */}
-      <div className="absolute inset-0 z-10 bg-black/20"></div>
-      <div className="absolute inset-0 z-20 p-8 text-white">
-        <h1 className="text-4xl font-bold">{currentBanner.title}</h1>
-        <p className="text-xl italic mt-2">{currentBanner.subtitle}</p>
-        <p className="mt-4 max-w-md">{currentBanner.description}</p>
-        <ul className="mt-4 space-y-2">
-          {currentBanner.leftContent.features.map((f, i) => (
-            <li key={i} className="text-sm">• {f}</li>
-          ))}
-        </ul>
+      {/* Carousel Container */}
+      <div
+        className="flex transition-transform duration-700 ease-in-out"
+        style={{
+          transform: `translateX(-${currentSlide * 100}%)`,
+          cursor: isDragging ? 'grabbing' : 'grab',
+        }}
+      >
+        {advertisements.map((ad, index) => (
+          <div key={ad.id} className="w-full flex-shrink-0 relative">
+            <div className="w-full h-64 sm:h-80 md:h-96 lg:h-[450px] xl:h-[500px] overflow-hidden">
+              {ad.type === 'image' ? (
+                <img
+                  src={ad.src}
+                  alt={`Advertisement ${index + 1}`}
+                  className="w-full h-full object-cover object-center transition-transform duration-700 hover:scale-105"
+                  draggable={false}
+                  onError={(e) => {
+                    e.target.src = '/placeholder-image.jpg';
+                  }}
+                />
+              ) : (
+                <video
+                  src={ad.src}
+                  className="w-full h-full object-cover object-center"
+                  autoPlay
+                  muted
+                  loop
+                  playsInline
+                  draggable={false}
+                />
+              )}
+            </div>
+          </div>
+        ))}
       </div>
+
+      {/* Dots Indicator */}
+      <div className="absolute bottom-3 left-1/2 transform -translate-x-1/2 flex space-x-2 z-10">
+        {advertisements.map((_, index) => (
+          <button
+            key={index}
+            onClick={() => setCurrentSlide(index)}
+            className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
+              index === currentSlide ? 'bg-[#733857] scale-125' : 'bg-gray-300 hover:bg-gray-400'
+            }`}
+            aria-label={`Go to slide ${index + 1}`}
+          />
+        ))}
+      </div>
+
+      {/* Smooth animation styles */}
+      <style>{`
+        img,
+        video {
+          -webkit-user-drag: none;
+          user-select: none;
+          pointer-events: none;
+        }
+        
+        .cursor-grab:active {
+          cursor: grabbing;
+        }
+        
+        .touch-pan-x {
+          touch-action: pan-x;
+        }
+      `}</style>
     </div>
   );
 };
-
-// === LOADING COMPONENT ===
-const BannerLoading = () => (
-  <div className="relative w-full h-[60vh] md:h-[70vh] lg:h-[80vh] flex items-center justify-center bg-black">
-    <div className="text-center">
-      <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-pink-400 mx-auto"></div>
-      <p className="text-white mt-4">Loading banners...</p>
-    </div>
-  </div>
-);
-
-// === EMPTY COMPONENT ===
-const BannerEmpty = () => (
-  <div className="relative w-full h-[60vh] md:h-[70vh] lg:h-[80vh] flex items-center justify-center bg-black text-white text-center">
-    <h2 className="text-4xl font-bold">La Patisserie</h2>
-    <p>Sweet Perfection Awaits</p>
-  </div>
-);
 
 export default AdvertisementBanner;

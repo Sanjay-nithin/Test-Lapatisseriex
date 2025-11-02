@@ -13,6 +13,13 @@ export default defineConfig({
   },
   server: {
     historyApiFallback: true,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+        secure: false,
+      },
+    },
   },
   build: {
     rollupOptions: {
@@ -20,5 +27,8 @@ export default defineConfig({
         manualChunks: undefined,
       },
     },
+    // Ensure service worker and offline page are copied to dist
+    copyPublicDir: true,
   },
+  publicDir: 'public',
 })

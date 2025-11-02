@@ -1,6 +1,7 @@
 import { createContext, useState, useContext, useEffect, useCallback, useRef } from 'react';
-import axios from 'axios';
-import { useAuth } from '../AuthContext/AuthContext';
+import axiosInstance from '../../utils/axiosConfig';
+import { withRetry } from '../../utils/retry';
+import { useAuth } from '../../hooks/useAuth';
 
 const CategoryContext = createContext();
 
@@ -15,60 +16,71 @@ export const CategoryProvider = ({ children }) => {
   
   // Cache to prevent redundant API calls
   const requestCache = useRef(new Map());
+  const pendingRequests = useRef(new Map());
   const requestInProgress = useRef(new Map());
   
   const API_URL = import.meta.env.VITE_API_URL;
   
-  // Set a timeout for cache validity (30 seconds)
-  const CACHE_TIMEOUT = 30000;
+  // Set timeouts for cache validity (longer for special images to reduce API calls)
+  const CACHE_TIMEOUT = 300000; // 5 minutes for regular content
+  const SPECIAL_IMAGES_CACHE_TIMEOUT = 900000; // 15 minutes for special images
 
   // Fetch all categories with caching
-  const fetchCategories = useCallback(async (includeInactive = false) => {
-    try {
-      // Add query params if we need to include inactive categories
-      // Use the proper value for isActive parameter: 'all' to include inactive categories
-      const queryParams = includeInactive ? '?isActive=all' : '';
-      const cacheKey = `categories-${includeInactive ? 'all' : 'active'}`;
-      
-      // Check if we have a valid cached response
+  const fetchCategories = useCallback(async (includeInactive = false, options = {}) => {
+    const { forceRefresh = false } = options;
+
+    // Build cache key and query string
+    const queryParams = includeInactive ? '?isActive=all' : '';
+    const cacheKey = `categories-${includeInactive ? 'all' : 'active'}`;
+    const now = Date.now();
+
+    if (!forceRefresh) {
+      // Return cached data when still fresh (30s)
       const cachedResult = requestCache.current.get(cacheKey);
-      const now = Date.now();
-      
       if (cachedResult && (now - cachedResult.timestamp < 30000)) {
         console.log(`Using cached category data for key: ${cacheKey}`);
         return cachedResult.data;
       }
-      
-      // Mark this request as in progress
-      requestInProgress.current.set(cacheKey, true);
-      
-      // Set loading state
-      setLoading(true);
-      setError(null);
-      
-      const response = await axios.get(`${API_URL}/categories${queryParams}`);
-      
-      // Debug the data received
-      console.log(`Categories fetched (includeInactive=${includeInactive}):`, response.data.length);
-      
-      // Update state with the fetched categories
-      setCategories(response.data);
-      
-      // Store the result in cache with current timestamp
-      requestCache.current.set(cacheKey, {
-        data: response.data,
-        timestamp: now
-      });
-      
-      // Request is no longer in progress
-      requestInProgress.current.delete(cacheKey);
-      
-      setLoading(false);
-      return response.data;
-    } catch (err) {
-      console.error("Error fetching categories:", err);
-      setError("Failed to load categories");
-      setLoading(false);
+
+      // Share ongoing requests between callers
+      const pending = pendingRequests.current.get(cacheKey);
+      if (pending) {
+        console.log(`Waiting for in-flight category request: ${cacheKey}`);
+        return pending;
+      }
+    }
+
+    const requestPromise = (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+  const response = await withRetry(() => axiosInstance.get(`${API_URL}/categories${queryParams}`), { retries: 2, delay: 250 });
+        console.log(`📂 Categories loaded: ${response.data.length} (${includeInactive ? 'all' : 'active only'})`);
+
+        // Persist data
+        setCategories(response.data);
+        requestCache.current.set(cacheKey, {
+          data: response.data,
+          timestamp: Date.now()
+        });
+
+        return response.data;
+      } catch (err) {
+        console.error("Error fetching categories:", err);
+        setError("Failed to load categories");
+        throw err;
+      } finally {
+        pendingRequests.current.delete(cacheKey);
+        setLoading(false);
+      }
+    })();
+
+    pendingRequests.current.set(cacheKey, requestPromise);
+
+    try {
+      return await requestPromise;
+    } catch {
       return [];
     }
   }, [API_URL]);
@@ -79,7 +91,7 @@ export const CategoryProvider = ({ children }) => {
       setLoading(true);
       setError(null);
       
-      const response = await axios.get(`${API_URL}/categories/${categoryId}`);
+  const response = await withRetry(() => axiosInstance.get(`${API_URL}/categories/${categoryId}`), { retries: 2, delay: 250 });
       return response.data;
     } catch (err) {
       console.error(`Error fetching category ${categoryId}:`, err);
@@ -96,7 +108,7 @@ export const CategoryProvider = ({ children }) => {
       setLoading(true);
       setError(null);
       
-      const response = await axios.get(`${API_URL}/categories/${categoryId}/products`);
+  const response = await withRetry(() => axiosInstance.get(`${API_URL}/categories/${categoryId}/products`), { retries: 2, delay: 250 });
       return response.data;
     } catch (err) {
       console.error(`Error fetching products for category ${categoryId}:`, err);
@@ -114,11 +126,11 @@ export const CategoryProvider = ({ children }) => {
       setError(null);
       
       // Get auth token
-      const { getAuth } = await import('firebase/auth');
+  const { getAuth } = await import('firebase/auth');
       const auth = getAuth();
       const idToken = await auth.currentUser.getIdToken(true);
       
-      const response = await axios.post(
+      const response = await axiosInstance.post(
         `${API_URL}/categories`, 
         categoryData,
         {
@@ -160,7 +172,7 @@ export const CategoryProvider = ({ children }) => {
       const auth = getAuth();
       const idToken = await auth.currentUser.getIdToken(true);
       
-      const response = await axios.put(
+      const response = await axiosInstance.put(
         `${API_URL}/categories/${categoryId}`, 
         categoryData,
         {
@@ -199,12 +211,14 @@ export const CategoryProvider = ({ children }) => {
       setLoading(true);
       setError(null);
       
+      console.log(`Attempting to delete category: ${categoryId}`);
+      
       // Get auth token
       const { getAuth } = await import('firebase/auth');
       const auth = getAuth();
       const idToken = await auth.currentUser.getIdToken(true);
       
-      await axios.delete(
+      const response = await axiosInstance.delete(
         `${API_URL}/categories/${categoryId}`,
         {
           headers: { 
@@ -212,6 +226,8 @@ export const CategoryProvider = ({ children }) => {
           }
         }
       );
+      
+      console.log(`Category deletion response:`, response.data);
       
       // Clear cache to ensure fresh data on next fetch
       for (const key of requestCache.current.keys()) {
@@ -223,11 +239,38 @@ export const CategoryProvider = ({ children }) => {
       // Update categories in state immediately without making another API call
       setCategories(prev => prev.filter(cat => cat._id !== categoryId));
       
+      console.log(`Category ${categoryId} deleted successfully from frontend state`);
+      
       return true;
     } catch (err) {
       console.error(`Error deleting category ${categoryId}:`, err);
-      setError(err.response?.data?.message || "Failed to delete category");
-      throw err;
+      
+      // Provide more specific error messages
+      let errorMessage = "Failed to delete category";
+      
+      if (err.response?.status === 404) {
+        errorMessage = "Category not found";
+      } else if (err.response?.status === 401) {
+        errorMessage = "You are not authorized to delete this category";
+      } else if (err.response?.status === 403) {
+        errorMessage = "Access denied. Admin privileges required";
+      } else if (err.response?.status === 400) {
+        // Check if it's the products dependency error
+        if (err.response?.data?.message?.includes('products are using this category')) {
+          errorMessage = err.response.data.message;
+        } else {
+          errorMessage = err.response?.data?.message || "Invalid request";
+        }
+      } else if (err.response?.status === 500) {
+        errorMessage = "Server error occurred while deleting category. Please try again.";
+      } else if (err.response?.data?.message) {
+        errorMessage = err.response.data.message;
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
+      throw new Error(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -236,7 +279,7 @@ export const CategoryProvider = ({ children }) => {
   // Load categories when the context is first mounted to make sure they're available
   useEffect(() => {
     const loadInitialCategories = async () => {
-      console.log("Loading initial categories");
+      console.log("📂 Loading categories...");
       // Always fetch active categories on app load
       await fetchCategories(false);
       
@@ -261,7 +304,7 @@ export const CategoryProvider = ({ children }) => {
       const auth = getAuth();
       const idToken = await auth.currentUser.getIdToken(true);
       
-      const response = await axios.post(
+      const response = await axiosInstance.post(
         `${API_URL}/categories/${categoryId}/reprocess-images`,
         {},
         {
@@ -303,14 +346,34 @@ export const CategoryProvider = ({ children }) => {
       const cachedResult = requestCache.current.get(cacheKey);
       const now = Date.now();
       
-      if (cachedResult && (now - cachedResult.timestamp < CACHE_TIMEOUT)) {
-        console.log('Using cached special images data');
+      // Use longer cache timeout for special images to reduce API calls
+      if (cachedResult && (now - cachedResult.timestamp < SPECIAL_IMAGES_CACHE_TIMEOUT)) {
+        console.log('📸 Using cached special images data');
         return cachedResult.data;
       }
       
+      // Check if request is already in progress
+      if (requestInProgress.current.get(cacheKey)) {
+        console.log('📸 Special images request already in progress, waiting...');
+        // Wait for the request to complete
+        let attempts = 0;
+        while (requestInProgress.current.get(cacheKey) && attempts < 50) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          attempts++;
+        }
+        // Try to get from cache again
+        const updatedCache = requestCache.current.get(cacheKey);
+        if (updatedCache) {
+          return updatedCache.data;
+        }
+      }
+      
+      // Mark this request as in progress
+      requestInProgress.current.set(cacheKey, true);
+      
       setError(null);
       
-      const response = await axios.get(`${API_URL}/categories/special-images`);
+  const response = await withRetry(() => axiosInstance.get(`${API_URL}/categories/special-images`), { retries: 2, delay: 250 });
       
       // Store the result in cache with current timestamp
       requestCache.current.set(cacheKey, {
@@ -318,13 +381,18 @@ export const CategoryProvider = ({ children }) => {
         timestamp: now
       });
       
+      // Request is no longer in progress
+      requestInProgress.current.delete(cacheKey);
+      
       return response.data;
     } catch (err) {
       console.error("Error fetching special images:", err);
       setError("Failed to load special images");
+      // Request is no longer in progress
+      requestInProgress.current.delete('special-images');
       return { bestSeller: null, newlyLaunched: null };
     }
-  }, [API_URL]);
+  }, [API_URL]); // Keep API_URL dependency but minimize calls through caching
 
   // Admin function: Update special category image
   const updateSpecialImage = useCallback(async (type, imageUrl) => {
@@ -337,7 +405,7 @@ export const CategoryProvider = ({ children }) => {
       const auth = getAuth();
       const idToken = await auth.currentUser.getIdToken(true);
       
-      const response = await axios.put(`${API_URL}/categories/special-image/${type}`, 
+      const response = await axiosInstance.put(`${API_URL}/categories/special-image/${type}`, 
         { imageUrl },
         {
           headers: {
@@ -374,7 +442,7 @@ export const CategoryProvider = ({ children }) => {
       const auth = getAuth();
       const idToken = await auth.currentUser.getIdToken(true);
       
-      const response = await axios.delete(`${API_URL}/categories/special-image/${type}`, 
+      const response = await axiosInstance.delete(`${API_URL}/categories/special-image/${type}`, 
         {
           headers: {
             'Authorization': `Bearer ${idToken}`,

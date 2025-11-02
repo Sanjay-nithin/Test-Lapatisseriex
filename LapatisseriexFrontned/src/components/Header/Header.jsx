@@ -1,16 +1,22 @@
 import React, { useState, useEffect, useRef, useMemo, memo, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useAuth } from '../../context/AuthContext/AuthContext';
+import { useAuth } from '../../hooks/useAuth';
+
 import { useLocation as useLocationContext } from '../../context/LocationContext/LocationContext';
-import { useCart } from '../../context/CartContext';
+import { useHostel } from '../../context/HostelContext/HostelContext';
+import { useCart } from '../../hooks/useCart';
 import { useCategory } from '../../context/CategoryContext/CategoryContext';
 import { useFavorites } from '../../context/FavoritesContext/FavoritesContext';
+import SparkAnimation from '../common/SparkAnimation/SparkAnimation';
+import { useSparkAnimationContext } from '../../context/SparkAnimationContext/SparkAnimationContext';
+import DebugUserState from '../common/DebugUserState';
 import './Header.css';
 import './remove-focus.css';
 import './hide-search.css';
 
 // Import UserMenu component
 import UserMenu from './UserMenu/UserMenu';
+import NotificationBell from '../Notifications/NotificationBell';
 
 // Import icons
 import { 
@@ -20,7 +26,6 @@ import {
   MapPin, 
   ChevronDown,
   ShoppingBag,
-  Heart,
   AlertTriangle,
   Settings,
   Package,
@@ -32,7 +37,6 @@ import {
   ShoppingCart,
   Utensils,
   Crown,
-  Sparkles,
   Power,
   Phone
 } from 'lucide-react';
@@ -41,26 +45,45 @@ const Header = ({ isAdminView = false }) => {
   const { 
     user,
     toggleAuthPanel,
-    logout
+    logout,
+    getCurrentUser: fetchFreshUserData
   } = useAuth();
   
+  const { sparks } = useSparkAnimationContext();
+  
+  // Debug log for sparks (only when sparks change)
+  useEffect(() => {
+    if (sparks.length > 0) {
+      console.log('🎇 Header sparks:', sparks.length, 'active sparks');
+    }
+  }, [sparks.length]);
+  
+  const locationContext = useLocationContext();
   const {
-    locations,
-    loading: locationsLoading,
+    locations = [],
+    loading: locationsLoading = false,
     updateUserLocation,
     getCurrentLocationName,
     hasValidDeliveryLocation
-  } = useLocationContext();
+  } = locationContext || {};
   
-  const { cartCount } = useCart();
-  const { favorites } = useFavorites();
-
-  // Get categories from CategoryContext
+  const hostelContext = useHostel();
+  const {
+    hostels = [],
+    fetchHostelsByLocation,
+    fetchHostelById
+  } = hostelContext || {};
+  
+  const { cartCount = 0 } = useCart();
+  
+  // Get categories from CategoryContext with error handling
+  const categoryContext = useCategory();
   const { 
-    categories: dbCategories, 
-    loading: categoriesLoading,
-    error: categoriesError 
-  } = useCategory();
+    categories = [],
+    fetchCategories,
+    loading: categoriesLoading = false,
+    error: categoriesError = null 
+  } = categoryContext || {};
   
   const [isLocationDropdownOpen, setIsLocationDropdownOpen] = useState(false);
   const [isMegaMenuOpen, setIsMegaMenuOpen] = useState(false);
@@ -91,13 +114,18 @@ const Header = ({ isAdminView = false }) => {
   const memoizedCartCount = useMemo(() => cartCount, [cartCount]);
   
   // Use categories from database or fall back to empty array
-  const categories = useMemo(() => {
-    if (!dbCategories || dbCategories.length === 0) {
+  const filteredCategories = useMemo(() => {
+    if (!categories || !Array.isArray(categories) || categories.length === 0) {
       return [];
     }
     
-    return dbCategories
-      .filter(category => category.isActive)
+    return categories
+      .filter(category => 
+        category.isActive && 
+        category.name !== '__SPECIAL_IMAGES__' && 
+        !category.name?.includes('__SPECIAL_IMAGES__') &&
+        !category.name?.includes('_SPEC')
+      )
       .map(category => ({
         _id: category._id,
         id: category._id,
@@ -105,34 +133,174 @@ const Header = ({ isAdminView = false }) => {
         featuredImage: category.featuredImage || null,
         images: category.images || [],
       }));
-  }, [dbCategories]);
+  }, [categories]);
   
   // Get user's location display name
   const [userLocationDisplay, setUserLocationDisplay] = useState('Select Location');
+  const [isRefreshingLocation, setIsRefreshingLocation] = useState(false);
+  const [isCartHovered, setIsCartHovered] = useState(false);
   
-  // Memoize location display to prevent unnecessary re-calculations
+  // Memoize location display to prevent unnecessary re-calculations and ensure it updates properly
   const memoizedUserLocationDisplay = useMemo(() => {
+    // If we have a valid user location object, display it immediately
+    if (user?.location && typeof user.location === 'object' && user.location.area && user.location.city) {
+      const hostelName = user.hostel && typeof user.hostel === 'object' ? user.hostel.name : '';
+      return hostelName 
+        ? `${hostelName}, ${user.location.area}` 
+        : `${user.location.area}, ${user.location.city}`;
+    }
+    
+    // Otherwise use the computed display text
     return userLocationDisplay;
-  }, [userLocationDisplay]);
+  }, [userLocationDisplay, user?.location, user?.hostel]);
   
   // Update location display once when user changes
   const locationDisplayInitialized = useRef(false);
   const prevLocationIdRef = useRef(user?.location?._id);
   
+  // Helper function to find location by ID in locations array
+  const findLocationById = useCallback((locationId) => {
+    if (!locationId || !locations || locations.length === 0) return null;
+    return locations.find(loc => loc._id === locationId);
+  }, [locations]);
+  
+  // Helper function to find hostel by ID in hostels array
+  const findHostelById = useCallback((hostelId) => {
+    if (!hostelId || !hostels || hostels.length === 0) return null;
+    return hostels.find(h => h._id === hostelId);
+  }, [hostels]);
+  
+  // Effect to fetch hostel data when user has hostel ID but we don't have the hostel details
   useEffect(() => {
-    if (user?.location && user.location.area && user.location.city) {
-      if (user.hostel && user.hostel.name) {
-        setUserLocationDisplay(`${user.hostel.name}, ${user.location.area}`);
-      } else {
-        setUserLocationDisplay(`${user.location.area}, ${user.location.city}`);
+    const needsHostelFetch = user?.hostel && 
+                           typeof user.hostel === 'string' && 
+                           !findHostelById(user.hostel) && 
+                           fetchHostelById;
+                           
+    if (needsHostelFetch) {
+      console.log('Header - Fetching hostel by ID for display:', user.hostel);
+      fetchHostelById(user.hostel).catch(err => {
+        console.warn('Header - Failed to fetch hostel by ID:', err);
+      });
+    }
+  }, [user?.hostel, hostels, fetchHostelById, findHostelById]);
+  
+  useEffect(() => {
+    // If user location is already a populated object, use it directly
+    if (user?.location && typeof user.location === 'object' && user.location.area && user.location.city) {
+      const hostelName = user.hostel && typeof user.hostel === 'object' ? user.hostel.name : '';
+      const displayText = hostelName 
+        ? `${hostelName}, ${user.location.area}` 
+        : `${user.location.area}, ${user.location.city}`;
+      
+      setUserLocationDisplay(displayText);
+      locationDisplayInitialized.current = true;
+      return;
+    }
+
+    console.log('Header - User state update:', {
+      user: user ? {
+        uid: user.uid,
+        name: user.name,
+        email: user.email,
+        location: user.location ? (
+          typeof user.location === 'object' ? {
+            _id: user.location._id,
+            area: user.location.area,
+            city: user.location.city
+          } : { _id: user.location, type: 'string-id' }
+        ) : null,
+        hostel: user.hostel ? (
+          typeof user.hostel === 'object' ? {
+            _id: user.hostel._id,
+            name: user.hostel.name
+          } : { _id: user.hostel, type: 'string-id' }
+        ) : null
+      } : null,
+      locationsAvailable: locations ? locations.length : 0,
+      hostelsAvailable: hostels ? hostels.length : 0
+    });
+    
+    if (user?.location) {
+      let locationObj = null;
+      let hostelObj = null;
+      
+      // Handle populated location object
+      if (typeof user.location === 'object' && user.location.area && user.location.city) {
+        locationObj = user.location;
+      } 
+      // Handle location as string ID - look it up in locations array
+      else if (typeof user.location === 'string') {
+        locationObj = findLocationById(user.location);
+        console.log('Header - Looking up location by ID:', user.location, 'found:', locationObj);
       }
-      prevLocationIdRef.current = user.location._id;
+      
+      // Handle populated hostel object
+      if (user.hostel) {
+        if (typeof user.hostel === 'object' && user.hostel.name) {
+          hostelObj = user.hostel;
+        } 
+        // Handle hostel as string ID - look it up in hostels array
+        else if (typeof user.hostel === 'string') {
+          hostelObj = findHostelById(user.hostel);
+          console.log('Header - Looking up hostel by ID:', user.hostel, 'found:', hostelObj);
+        }
+      }
+      
+      // Set display based on what we found
+      if (locationObj && locationObj.area && locationObj.city) {
+        const displayText = hostelObj && hostelObj.name 
+          ? `${hostelObj.name}, ${locationObj.area}` 
+          : `${locationObj.area}, ${locationObj.city}`;
+        
+        // console.log('Header - Setting location display:', displayText); // Uncomment for debugging
+        
+        setUserLocationDisplay(displayText);
+        prevLocationIdRef.current = locationObj._id;
+      } else if (typeof user.location === 'string') {
+        // Location ID exists but we couldn't find the location details
+        console.warn('Header - User has location ID but location not found in locations array, refreshing...');
+        if (!isRefreshingLocation && fetchFreshUserData && localStorage.getItem('authToken')) {
+          setIsRefreshingLocation(true);
+          setUserLocationDisplay('Loading location...');
+          prevLocationIdRef.current = null;
+          
+          fetchFreshUserData().then(() => {
+            setIsRefreshingLocation(false);
+          }).catch(() => {
+            setIsRefreshingLocation(false);
+            setUserLocationDisplay('Select Location');
+          });
+        } else if (!fetchFreshUserData) {
+          // Fallback: show a generic message if we can't refresh
+          setUserLocationDisplay('Location set');
+        }
+      } else {
+        setUserLocationDisplay('Select Location');
+        prevLocationIdRef.current = null;
+      }
     } else {
       setUserLocationDisplay('Select Location');
       prevLocationIdRef.current = null;
     }
     locationDisplayInitialized.current = true;
-  }, [user?.uid, user?.location?._id]);
+  }, [user?.uid, user?.location, user?.hostel, locations, hostels, findLocationById, findHostelById, fetchFreshUserData, isRefreshingLocation]);
+  
+  // Effect to fetch hostels when user has location but hostel lookup failed
+  useEffect(() => {
+    if (user?.location && user?.hostel && typeof user.hostel === 'string') {
+      const locationId = typeof user.location === 'object' ? user.location._id : user.location;
+      
+      // Only fetch if we don't already have hostels for this location
+      const hostelExists = findHostelById(user.hostel);
+      if (!hostelExists && fetchHostelsByLocation && locationId) {
+        console.log('Header - Fetching hostels for location to resolve hostel lookup:', locationId);
+        fetchHostelsByLocation(locationId).catch(error => {
+          console.error('Header - Error fetching hostels:', error);
+        });
+      }
+    }
+  }, [user?.location, user?.hostel, findHostelById, fetchHostelsByLocation]);
 
   // Handle scroll event to change header styling and detect scroll direction
   useEffect(() => {
@@ -329,9 +497,9 @@ const Header = ({ isAdminView = false }) => {
     // Close location dropdown when opening mega menu
     setIsLocationDropdownOpen(false);
     setIsMegaMenuOpen(true);
-    // Set first category as default hover if categories exist
-    if (categories.length > 0 && !hoveredCategory) {
-      setHoveredCategory(categories[0]);
+    // Set first category as default hover if filteredCategories exist
+    if (filteredCategories.length > 0 && !hoveredCategory) {
+      setHoveredCategory(filteredCategories[0]);
     }
   }, [categories, hoveredCategory]);
   
@@ -391,126 +559,68 @@ const Header = ({ isAdminView = false }) => {
 
   return (
     <>
-    <header className="fixed top-0 left-0 right-0 z-50 bg-white transition-all duration-300" style={{fontFamily: 'sans-serif'}}>
+    <header className="md:fixed md:top-0 md:left-0 md:right-0 md:z-50 bg-white shadow-sm transition-all duration-300" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+      
+      {/* Mobile Top Header Bar - Shop Name and Logo */}
+      <div className="block md:hidden py-2 px-3 bg-white border-b border-gray-100">
+        <div className="flex justify-between items-center">
+          {/* Left side - Shop Name */}
+          <Link to="/" className="flex items-center">
+            <span className="text-lg font-light" style={{fontFamily: 'system-ui, -apple-system, sans-serif', color: '#281c20'}}>
+              La Patisserie
+            </span>
+          </Link>
+          
+          {/* Right side - Logo */}
+          <Link to="/" className="flex items-center">
+            <img src="/images/logo.png" alt="Sweet Cake Logo" className="h-8 opacity-90" />
+          </Link>
+        </div>
+      </div>
       
       {/* Mobile Location Bar - Display only, no dropdown */}
       {!isAdminView && (
         <div className={`mobile-location-bar md:hidden bg-white border-b border-gray-200 z-[56] transition-all duration-300 ${hideLocationBar ? 'max-h-0 py-0' : 'max-h-20 py-2'}`}>
           <div className="px-3">
-            <div className="flex justify-start">
-              <div className="flex items-center text-xs text-black py-1 px-2 rounded-md" style={{fontFamily: 'sans-serif'}}>
-                <MapPin className="h-3 w-3 mr-2 text-yellow-400" />
-                <span className="truncate max-w-[120px] font-medium">{memoizedUserLocationDisplay}</span>
-                {user && !hasValidDeliveryLocation() && (
+            <div className="flex justify-between items-center">
+              <button 
+                onClick={() => {
+                  if (user) {
+                    navigate('/profile');
+                  } else {
+                    toggleAuthPanel();
+                  }
+                }}
+                className="flex items-center text-xs py-1 px-2 rounded-md hover:bg-gray-50 transition-colors duration-200 active:bg-gray-100" 
+                style={{fontFamily: 'system-ui, -apple-system, sans-serif', color: 'rgba(40, 28, 32, 0.7)'}}
+              >
+                <img src="/compass.png" alt="Location" className="h-4 w-4 mr-2" />
+                <span className="truncate max-w-[120px] font-light">{memoizedUserLocationDisplay}</span>
+                {user && typeof hasValidDeliveryLocation === 'function' && !hasValidDeliveryLocation() && (
                   <AlertTriangle className="h-3 w-3 ml-1 text-amber-400" />
                 )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-      
-      {/* Premium Luxury Banner */}
-      {!isAdminView && (
-        <div className="luxury-banner-container relative overflow-hidden bg-gradient-to-r from-black via-gray-900 to-black py-1 px-3 sm:px-5">
-          {/* Golden Accent Lines */}
-          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-yellow-400 to-transparent opacity-80"></div>
-          <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-yellow-400 to-transparent opacity-80"></div>
-          
-          {/* Animated Background Elements */}
-          <div className="absolute inset-0 opacity-10">
-            <div className="floating-cake floating-cake-1"></div>
-            <div className="floating-cake floating-cake-2"></div>
-            <div className="floating-cake floating-cake-3"></div>
-            <div className="floating-sparkle floating-sparkle-1">✨</div>
-            <div className="floating-sparkle floating-sparkle-2">🍰</div>
-            <div className="floating-sparkle floating-sparkle-3">✨</div>
-            <div className="floating-sparkle floating-sparkle-4">🧁</div>
-          </div>
-          
-          {/* Elegant Border Frame */}
-          <div className="absolute inset-2 border border-yellow-400/30 rounded-lg"></div>
-          <div className="absolute inset-3 border border-white/10 rounded-md"></div>
-          
-          {/* Main Content */}
-          <div className="container mx-auto relative z-20 py-1">
-            {/* Single Row Layout */}
-            <div className="flex items-center justify-between">
-              {/* Phone Number - Left */}
-              <div className="flex items-center justify-start flex-shrink-0 w-48">
-                <button 
-                  className="flex items-center gap-1 text-yellow-400/80 flex-shrink-0 hover:text-yellow-400 transition-colors duration-200 md:cursor-default md:hover:text-yellow-400/80"
-                  onClick={() => {
-                    // Only navigate on mobile devices
-                    if (window.innerWidth < 768) {
-                      navigate('/contact');
-                    }
-                  }}
-                  style={{fontFamily: 'sans-serif'}}
-                >
-                  <Phone className="h-3 w-3" />
-                  <span className="text-xs font-light hidden md:inline">
-                    7845712388 / 9362166816
-                  </span>
-                </button>
-              </div>
+                <ChevronDown className="h-3 w-3 ml-1 opacity-60" />
+              </button>
               
-              {/* Center Content */}
-              <div className="flex flex-col items-center justify-center flex-1 px-4">
-                {/* Premium Badge */}
-                <div className="flex items-center gap-2 mb-1">
-                  <div className="w-4 h-px bg-gradient-to-r from-transparent to-yellow-400"></div>
-                  <span className="text-yellow-400 text-xs font-light tracking-[0.2em] uppercase" style={{fontFamily: 'serif'}}>
-                    La Patisserie
-                  </span>
-                  <div className="w-4 h-px bg-gradient-to-l from-transparent to-yellow-400"></div>
+              {/* Mobile Notification Bell - Right Side - Only show when user is logged in */}
+              {user && (
+                <div className="flex items-center">
+                  <NotificationBell />
                 </div>
-                
-                {/* Main Message */}
-                <h2 className="text-white text-sm sm:text-base md:text-lg font-light tracking-wide text-center" style={{fontFamily: 'serif'}}>
-                  <span className="inline-block animate-fade-in-up">✨</span>
-                  <span className="mx-1 relative">
-                    Fresh Artisan Cakes & Pastries
-                    <div className="absolute -bottom-1 left-0 right-0 h-px bg-gradient-to-r from-transparent via-yellow-400 to-transparent transform scale-x-0 animate-scale-in animation-delay-1000"></div>
-                  </span>
-                  <span className="inline-block animate-fade-in-up animation-delay-500">✨</span>
-                </h2>
-              </div>
-              
-              {/* Address - Right */}
-              <div className="flex items-center justify-end flex-shrink-0 w-48">
-                <button 
-                  className="flex items-center gap-1 text-yellow-400/80 flex-shrink-0 hover:text-yellow-400 transition-colors duration-200 md:cursor-default md:hover:text-yellow-400/80"
-                  onClick={() => {
-                    // Only navigate on mobile devices
-                    if (window.innerWidth < 768) {
-                      navigate('/contact');
-                    }
-                  }}
-                  style={{fontFamily: 'sans-serif'}}
-                >
-                  <span className="text-xs font-light hidden md:inline text-right">
-                    LIG 208 GANDHI MAANAGAR PEELAMEDU COIMBATORE
-                  </span>
-                  <MapPin className="h-3 w-3" />
-                </button>
-              </div>
+              )}
             </div>
           </div>
-          
-          {/* Subtle Overlay Pattern */}
-          <div className="absolute inset-0 bg-gradient-to-r from-black/20 via-transparent to-black/20 pointer-events-none"></div>
         </div>
       )}
       
       {/* Middle Bar - Logo and Profile/Login - Hidden on mobile */}
-      <div className="hidden md:block py-2 sm:py-3 px-2 sm:px-4 bg-white">
+      <div className="hidden md:block py-2 sm:py-3 px-2 sm:px-4 bg-white border-b border-gray-200">
         <div className="container mx-auto flex justify-between items-center">
           {/* Logo Text on Left with Navigation Links beside it - Hidden on mobile */}
           <div className="hidden md:flex items-center">
             <div className="flex items-center">
               <Link to="/" className="flex items-center header-logo-text">
-                <span className="text-yellow-400  font-light text-bold sm:text-xl md:text-2xl  truncate max-w-[120px] sm:max-w-none">
+                <span className="transition-colors duration-300 font-light text-bold sm:text-xl md:text-2xl truncate max-w-[120px] sm:max-w-none" style={{fontFamily: 'system-ui, -apple-system, sans-serif', color: '#281c20'}}>
                   La Patisserie
                   <div className="sugar-sprinkles">
                     {[...Array(15)].map((_, i) => (
@@ -531,12 +641,6 @@ const Header = ({ isAdminView = false }) => {
             
             {/* Navigation Links moved next to logo text on the same line - Premium Design */}
             <div className="flex items-center ml-4 md:ml-6 lg:ml-8 space-x-2 md:space-x-3 lg:space-x-4">
-              <Link to="/special" className="nav-item flex items-center gap-2 px-3 py-2 text-sm md:text-base text-black hover:text-yellow-600 backdrop-blur-sm rounded-lg transition-all duration-300 relative group" style={{fontFamily: 'sans-serif'}}>
-                <Sparkles className="h-4 w-4 text-gray-600 group-hover:text-yellow-600 transition-colors duration-300" />
-                <span className="relative z-10 font-medium">Special Deals</span>
-                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-yellow-400 to-transparent transform scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-center rounded-full"></div>
-              </Link>
-              
               {/* Menu Nav Item with Mega Dropdown - Premium Design */}
               <div 
                 className="relative" 
@@ -544,10 +648,10 @@ const Header = ({ isAdminView = false }) => {
                 onMouseEnter={handleMegaMenuEnter}
                 onMouseLeave={handleMegaMenuLeave}
               >
-                <Link to="/products" className="nav-item flex items-center gap-2 px-3 py-2 text-sm md:text-base text-black hover:text-yellow-600 backdrop-blur-sm rounded-lg transition-all duration-300 relative group" style={{fontFamily: 'sans-serif'}}>
-                  <Utensils className="h-4 w-4 text-gray-600 group-hover:text-yellow-600 transition-colors duration-300" />
-                  <span className="relative z-10 font-medium">Menu</span>
-                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-yellow-400 to-transparent transform scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-center rounded-full"></div>
+                <Link to="/products" className="nav-item flex items-center gap-2 px-3 py-2 text-sm md:text-base rounded-lg transition-all duration-300 relative group text-center md:text-center align-middle" style={{fontFamily: 'system-ui, -apple-system, sans-serif', color: '#281c20'}}>
+                  <img src="/food.png" alt="Menu" className="h-5 w-5 transition-all duration-300 group-hover:scale-110 align-middle" />
+                  <span className="relative z-10 font-light" style={{color: '#733857', fontWeight: 400, verticalAlign: 'middle'}}>Menu</span>
+                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-[#733857] to-transparent transform scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-center rounded-full"></div>
                 </Link>
                 
                 {/* Invisible bridge to prevent hover gap */}
@@ -556,50 +660,96 @@ const Header = ({ isAdminView = false }) => {
                 )}
                 
                 {/* Mega Menu Dropdown */}
-                {isMegaMenuOpen && categories.length > 0 && (
+                {isMegaMenuOpen && filteredCategories.length > 0 && (
                   <div
-                    className="absolute top-full left-0 mt-3 w-[600px] h-[400px] bg-white backdrop-blur-sm shadow-xl rounded-lg overflow-hidden z-50 border border-gray-200 transform opacity-0 scale-95 animate-dropdown"
-                    style={{fontFamily: 'sans-serif', animation: 'dropdownFadeIn 0.3s ease-out forwards'}}
+                    className="absolute top-full left-0 mt-3 w-[600px] h-[400px] bg-white backdrop-blur-sm shadow-lg rounded-lg overflow-hidden z-50 border border-gray-100 transform opacity-0 scale-95 animate-dropdown"
+                    style={{fontFamily: 'system-ui, -apple-system, sans-serif', animation: 'dropdownFadeIn 0.3s ease-out forwards', boxShadow: '0 8px 32px rgba(40, 28, 32, 0.15), 0 4px 16px rgba(40, 28, 32, 0.1)'}}
                   >
                     <div className="flex h-full">
                       {/* Categories Sidebar */}
-                      <div className="w-1/2 bg-white border-r border-gray-200">
-                        <div className="px-4 py-3 bg-gray-50 text-gray-700 border-b border-gray-200">
-                          <h3 className="text-sm font-medium tracking-wide">Categories</h3>
+                      <div className="w-1/2 bg-white border-r border-gray-100">
+                        <div className="px-4 py-3 bg-gray-50/50 border-b border-gray-100">
+                          <h3 className="text-sm font-light tracking-wide uppercase" style={{color: '#281c20'}}>Categories</h3>
                         </div>
-                        <div className="p-4 overflow-y-auto h-[calc(100%-56px)] custom-scrollbar">
+                        <div className="p-4 overflow-y-auto h-[calc(100%-110px)] custom-scrollbar">
                           <div className="space-y-1">
-                            {categories.map((category) => (
+                            {filteredCategories.map((category) => (
                               <button
                                 key={category._id}
-                                className={`w-full text-left px-3 py-2 rounded-md transition-all duration-200 group relative ${
+                                className={`w-full text-left px-3 py-2 rounded-lg transition-all duration-300 group relative backdrop-filter backdrop-blur-sm ${
                                   hoveredCategory?._id === category._id
-                                    ? 'bg-gray-100 text-gray-900'
-                                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-800'
+                                    ? 'bg-gray-50/80 transform translateY(-1px)'
+                                    : 'hover:bg-gray-50/80 hover:transform hover:translateY(-1px)'
                                 }`}
+                                style={{
+                                  color: hoveredCategory?._id === category._id ? '#281c20' : '#281c20',
+                                  fontFamily: 'system-ui, -apple-system, sans-serif'
+                                }}
                                 onMouseEnter={() => handleCategoryHover(category)}
                                 onClick={() => {
                                   setIsMegaMenuOpen(false);
                                   navigate(`/products?category=${category._id}`);
                                 }}
                               >
-                                <span className="relative z-10 font-medium text-sm">{category.name}</span>
+                                <span className="relative z-10 font-light text-sm">{category.name}</span>
+                                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-[#733857] to-transparent transform scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-center rounded-full"></div>
                               </button>
                             ))}
                           </div>
+                        </div>
+                        
+                        {/* Premium View All Products Button */}
+                        <div className="p-4 border-t border-gray-100">
+                          <button
+                            onClick={() => {
+                              setIsMegaMenuOpen(false);
+                              navigate('/products');
+                            }}
+                            className="w-full group relative overflow-hidden py-3 px-4 transition-all duration-500 transform hover:scale-[1.02] hover:shadow-lg"
+                            style={{
+                              background: 'linear-gradient(135deg, #281c20 0%, #733857 50%, #281c20 100%)',
+                              backgroundSize: '200% 200%',
+                              animation: 'gradientShift 3s ease infinite'
+                            }}
+                          >
+                            {/* Animated background overlay */}
+                            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent transform -translate-x-full group-hover:translate-x-full transition-transform duration-700"></div>
+                            
+                            {/* Button content */}
+                            <div className="relative flex items-center justify-center gap-2 text-white">
+                              <img 
+                                src="/menu.png" 
+                                alt="Products Icon" 
+                                className="h-4 w-4 transition-all duration-300 group-hover:scale-110 group-hover:rotate-12" 
+                              />
+                              <span className="font-medium text-sm tracking-wide">VIEW ALL PRODUCTS</span>
+                              <div className="ml-1 transition-all duration-300 group-hover:translate-x-1">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="stroke-current">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                                </svg>
+                              </div>
+                            </div>
+                            
+                            {/* Sparkle effects */}
+                            <div className="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                              <div className="absolute top-2 left-4 w-1 h-1 bg-white rounded-full animate-ping"></div>
+                              <div className="absolute top-4 right-6 w-1 h-1 bg-white rounded-full animate-ping" style={{animationDelay: '0.5s'}}></div>
+                              <div className="absolute bottom-3 left-8 w-1 h-1 bg-white rounded-full animate-ping" style={{animationDelay: '1s'}}></div>
+                            </div>
+                          </button>
                         </div>
                       </div>
                       
                       {/* Dynamic Image Display */}
                       <div className="w-1/2 bg-white flex flex-col">
-                        <div className="px-4 py-3 bg-gray-50 text-gray-700 border-b border-gray-200">
-                          <h3 className="text-sm font-medium tracking-wide">
+                        <div className="px-4 py-3 bg-gray-50/50 border-b border-gray-100">
+                          <h3 className="text-sm font-light tracking-wide uppercase" style={{color: '#281c20'}}>
                             {hoveredCategory ? hoveredCategory.name : 'Select Category'}
                           </h3>
                         </div>
                         <div className="flex-1 flex items-center justify-center p-6">
                           {hoveredCategory && hoveredCategory.featuredImage ? (
-                            <div className="relative w-full h-full max-w-[200px] max-h-[200px] rounded-lg overflow-hidden">
+                            <div className="relative w-full h-full max-w-[200px] max-h-[200px] rounded-lg overflow-hidden shadow-sm">
                               <img 
                                 src={hoveredCategory.featuredImage} 
                                 alt={hoveredCategory.name}
@@ -609,32 +759,22 @@ const Header = ({ isAdminView = false }) => {
                                   e.target.nextSibling.style.display = 'flex';
                                 }}
                               />
-                              <div className="hidden w-full h-full bg-gray-100 items-center justify-center">
-                                <Utensils className="h-16 w-16 text-gray-400" />
+                              <div className="hidden w-full h-full bg-gray-50/50 items-center justify-center backdrop-blur-sm">
+                                <Utensils className="h-16 w-16" style={{color: '#281c20', opacity: 0.4}} />
                               </div>
                             </div>
                           ) : (
-                            <div className="w-full h-full max-w-[200px] max-h-[200px] bg-gray-100 rounded-lg flex items-center justify-center border border-gray-200">
+                            <div className="w-full h-full max-w-[200px] max-h-[200px] bg-gray-50/50 rounded-lg flex items-center justify-center border border-gray-100 backdrop-blur-sm">
                               <div className="text-center">
-                                <Utensils className="h-16 w-16 text-gray-400 mx-auto mb-3" />
-                                <p className="text-gray-500 text-sm">
+                                <Utensils className="h-16 w-16 mx-auto mb-3" style={{color: '#281c20', opacity: 0.4}} />
+                                <p className="text-sm font-light" style={{color: '#281c20', opacity: 0.6}}>
                                   {hoveredCategory ? 'No Image Available' : 'Hover over a category'}
                                 </p>
                               </div>
                             </div>
                           )}
                         </div>
-                        <div className="px-4 py-3 bg-white border-t border-gray-200">
-                          <button 
-                            className="w-full bg-gradient-to-r from-yellow-400 to-yellow-500 text-black py-2 px-4 rounded-lg font-medium text-sm hover:from-yellow-300 hover:to-yellow-400 transition-all duration-200 shadow-sm hover:shadow-md"
-                            onClick={() => {
-                              setIsMegaMenuOpen(false);
-                              navigate('/products');
-                            }}
-                          >
-                            View All Products
-                          </button>
-                        </div>
+                       
                       </div>
                     </div>
                   </div>
@@ -649,19 +789,19 @@ const Header = ({ isAdminView = false }) => {
                 onMouseLeave={handleLocationHoverLeave}
               >
                 <button 
-                  className="nav-item flex items-center gap-2 px-3 py-2 text-sm md:text-base text-black hover:text-yellow-600 backdrop-blur-sm rounded-lg transition-all duration-300 relative group"
+                  className="nav-item flex items-center gap-2 px-3 py-2 text-sm md:text-base transition-all duration-300 relative group text-center md:text-center align-middle"
                   onClick={toggleLocationDropdown}
-                  style={{fontFamily: 'sans-serif'}}
+                  style={{fontFamily: 'system-ui, -apple-system, sans-serif', color: '#281c20'}}
                 >
-                  <MapPin className="h-4 w-4 text-gray-600 group-hover:text-yellow-600 transition-all duration-300 group-hover:scale-110" />
-                  <span className="truncate max-w-[120px] sm:max-w-[140px] font-medium relative z-10">{memoizedUserLocationDisplay}</span>
-                  <ChevronDown className="h-4 w-4 text-gray-600 transition-all duration-300 group-hover:rotate-180 group-hover:text-yellow-600" />
-                  {user && !hasValidDeliveryLocation() && (
+                  <img src="/compass.png" alt="Location" className="h-5 w-5 transition-all duration-300 group-hover:scale-110 align-middle" />
+                  <span className="truncate max-w-[120px] sm:max-w-[140px] font-light relative z-10" style={{color: '#733857', fontWeight: 400, verticalAlign: 'middle'}}>{memoizedUserLocationDisplay}</span>
+                  <ChevronDown className="h-4 w-4 transition-all duration-300 group-hover:rotate-180 align-middle" style={{color: '#281c20'}} />
+                  {user && typeof hasValidDeliveryLocation === 'function' && !hasValidDeliveryLocation() && (
                     <div className="absolute -top-1 -right-1">
                       <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
                     </div>
                   )}
-                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-yellow-400 to-transparent transform scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-center rounded-full"></div>
+                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-[#733857] to-transparent transform scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-center rounded-full"></div>
                 </button>
                 
                 {/* Invisible bridge to prevent hover gap */}
@@ -672,40 +812,96 @@ const Header = ({ isAdminView = false }) => {
                 {/* Location Dropdown */}
                 {isLocationDropdownOpen && (
                   <div
-                    className="absolute top-full left-0 mt-3 w-56 bg-white shadow-xl rounded-lg overflow-hidden z-50 border border-gray-200 transform opacity-0 scale-95 animate-dropdown"
-                    style={{fontFamily: 'sans-serif', animation: 'dropdownFadeIn 0.3s ease-out forwards'}}
+                    className="absolute top-full left-0 mt-3 w-56 bg-white backdrop-blur-sm overflow-hidden z-50 border border-gray-100 transform opacity-0 scale-95 animate-dropdown"
+                    style={{
+                      fontFamily: 'system-ui, -apple-system, sans-serif', 
+                      animation: 'dropdownFadeIn 0.3s ease-out forwards',
+                      boxShadow: '0 8px 32px rgba(40, 28, 32, 0.15), 0 4px 16px rgba(40, 28, 32, 0.1)'
+                    }}
                   >
-                    <div className="px-4 py-3  text-gray-400 ">
-                      <h3 className="text-xs font-medium tracking-wide">Settings</h3>
-                    </div>
-                    <div className="p-2">
-                      <Link
-                        to="/profile"
-                        className="flex items-center gap-3 px-3 py-2  text-yellow-500 rounded-lg transition-all duration-200 font-medium"
-                        style={{fontFamily: 'sans-serif'}}
-                        onClick={() => setIsLocationDropdownOpen(false)}
-                      >
-                        <Settings className="h-4 w-4 text-black" />
-                        <span>Edit in settings</span>
-                      </Link>
-                    </div>
+                    {user ? (
+                      // User is logged in - show profile link
+                      <>
+                        <div className="px-4 py-3 bg-gray-50/50 border-b border-gray-100">
+                          <h3 className="text-xs font-light tracking-wide uppercase" style={{color: '#281c20'}}>Settings</h3>
+                        </div>
+                        <div className="p-2">
+                          <Link
+                            to="/profile"
+                            className="flex items-center gap-3 px-3 py-2 hover:bg-gray-50/80 hover:transform hover:translateY(-1px) transition-all duration-300 font-light relative group backdrop-filter backdrop-blur-sm"
+                            style={{fontFamily: 'system-ui, -apple-system, sans-serif', color: '#281c20'}}
+                            onClick={() => setIsLocationDropdownOpen(false)}
+                          >
+                            <img 
+                              src="/gamification.png" 
+                              alt="Settings Icon" 
+                              className="h-4 w-4 transition-all duration-300 group-hover:scale-110" 
+                            />
+                            <span className="relative z-10">Edit in settings</span>
+                            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-[#733857] to-transparent transform scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-center rounded-full"></div>
+                          </Link>
+                        </div>
+                      </>
+                    ) : (
+                      // User is not logged in - show location selection dropdown
+                      <>
+                        <div className="px-4 py-3 bg-gray-50/50 border-b border-gray-100">
+                          <h3 className="text-xs font-light tracking-wide uppercase" style={{color: '#281c20'}}>Select Location</h3>
+                        </div>
+                        <div 
+                          className="p-2 max-h-48 overflow-y-auto" 
+                          style={{
+                            scrollbarWidth: 'none', 
+                            msOverflowStyle: 'none',
+                            WebkitScrollbar: 'none'
+                          }}
+                        >
+                          {locations && locations.length > 0 ? (
+                            locations.map(location => (
+                              <button
+                                key={location._id}
+                                onClick={() => handleLocationSelect(location._id)}
+                                className="w-full flex items-center gap-3 px-3 py-2 hover:bg-gray-50/80 hover:transform hover:translateY(-1px) transition-all duration-300 font-light relative group backdrop-filter backdrop-blur-sm text-left"
+                                style={{fontFamily: 'system-ui, -apple-system, sans-serif', color: '#281c20'}}
+                              >
+                                <img 
+                                  src="/compass.png" 
+                                  alt="Location Icon" 
+                                  className="h-4 w-4 transition-all duration-300 group-hover:scale-110" 
+                                />
+                                <span className="relative z-10 truncate">
+                                  {location.area}, {location.city} - {location.pincode}
+                                </span>
+                                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-[#733857] to-transparent transform scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-center rounded-full"></div>
+                              </button>
+                            ))
+                          ) : (
+                            <div className="px-3 py-2 text-gray-500 text-sm">
+                              No locations available
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
+              
+              {/* Contact Nav Item - Premium Design */}
+             
             </div>
           </div>
           
           {/* Navigation Links - Desktop (user/cart section) - Premium Design */}
           <div className="hidden md:flex items-center space-x-4">
-
             {user && (
               <>
                 {/* Admin Dashboard Button - Show only for admins - Positioned first */}
                 {user.role === 'admin' && (
-                  <div className="bg-gray-800/50 backdrop-blur-sm rounded-lg border border-gray-700">
-                    <Link to="/admin/dashboard" className="flex items-center px-4 py-3 text-black hover:text-yellow-600 rounded-lg transition-all duration-300 relative group" style={{fontFamily: 'sans-serif'}}>
-                      <Settings className="h-5 w-5 text-gray-600 group-hover:text-yellow-600 transition-colors duration-300" />
-                      <span className="ml-2 text-sm font-medium">Dashboard</span>
+                  <div className="bg-[#281c20]/50 backdrop-blur-sm rounded-lg border border-[#733857]/30">
+                    <Link to="/admin/dashboard" className="flex items-center px-4 py-3 text-white hover:text-[#A855F7] rounded-lg transition-all duration-300 relative group" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+                      <Settings className="h-5 w-5 text-white group-hover:text-[#A855F7] transition-colors duration-300" />
+                      <span className="ml-2 text-sm font-light">Dashboard</span>
                     </Link>
                   </div>
                 )}
@@ -713,32 +909,23 @@ const Header = ({ isAdminView = false }) => {
                 {/* User Menu - Uses role-based display */}
                 <UserMenu />
 
-                {/* Favorites Link - Premium Design with Tooltip */}
-                {user && (
-                  <div className="tooltip">
-                    <div className="tooltip-content">
-                      <div className="animate-bounce text-orange-400 -rotate-10 text-xl font-black italic select-none">Favorites</div>
-                    </div>
-                    <Link to="/favorites" className="flex items-center px-3 py-2 text-gray-700 hover:text-black rounded-lg transition-all duration-300 relative group border border-transparent" style={{fontFamily: 'sans-serif'}}>
-                      <Heart className="h-4 w-4 text-gray-600 group-hover:text-red-500 transition-colors duration-300" />
-                      {favorites?.length > 0 && (
-                        <span className="absolute -top-1 -right-1 bg-gray-800 text-white text-xs px-1.5 py-0.5 rounded-full min-w-[1.25rem] h-5 flex items-center justify-center font-medium">
-                          {favorites.length}
-                        </span>
-                      )}
-                    </Link>
-                  </div>
-                )}
+                {/* Notification Bell - Only show when user is logged in */}
+                {user && <NotificationBell />}
 
                 {/* Cart component - Premium Design with Tooltip */}
                 <div className="tooltip">
                   <div className="tooltip-content">
-                    <div className="animate-bounce text-yellow-400 -rotate-10 text-sm font-black italic select-none">Cart</div>
+                    <div className="animate-bounce text-[#A855F7] -rotate-10 text-sm font-black italic select-none">Cart</div>
                   </div>
-                  <Link to="/cart" className="flex items-center px-3 py-2 text-black hover:text-yellow-600 backdrop-blur-sm rounded-lg transition-all duration-300 relative group" style={{fontFamily: 'sans-serif'}}>
-                    <ShoppingBag className="h-4 w-4 text-gray-600 group-hover:text-yellow-600 transition-colors duration-300" />
+                  <Link 
+                    to="/cart" 
+                    className="flex items-center px-3 py-2 rounded-lg transition-all duration-300 relative group" 
+                    style={{fontFamily: 'system-ui, -apple-system, sans-serif', color: '#281c20'}}
+                    data-cart-icon="true"
+                  >
+                    <img src="/ice-cream-cart.png" alt="Cart" className="h-5 w-5 transition-all duration-300 group-hover:scale-110" />
                     {memoizedCartCount > 0 && (
-                      <span className="absolute -top-1 -right-1 bg-gradient-to-r from-yellow-500 to-yellow-600 text-black text-xs px-1.5 py-0.5 rounded-full min-w-[1.25rem] h-5 flex items-center justify-center font-medium shadow-lg">
+                      <span className="absolute -top-1 -right-1 bg-gradient-to-r from-[#733857] to-[#281c20] text-white text-xs px-1.5 py-0.5 rounded-full min-w-[1.25rem] h-5 flex items-center justify-center font-light shadow-lg">
                         {memoizedCartCount}
                       </span>
                     )}
@@ -748,39 +935,41 @@ const Header = ({ isAdminView = false }) => {
             )}
             
             {/* WhatsApp Icon - Near Login */}
-            <a 
-              href="https://wa.me/917845712388"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1 px-2 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-all duration-300 shadow-sm"
-              style={{fontFamily: 'sans-serif'}}
-              title="Contact us on WhatsApp"
-            >
-              <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0020.885 3.488"/>
-              </svg>
-              <span className="text-xs font-medium hidden sm:inline">WhatsApp</span>
-            </a>
+           
             
             {!user && (
               <button 
                 onClick={toggleAuthPanel}
-                className="flex items-center gap-2 px-3 py-2 text-black hover:text-yellow-600 backdrop-blur-sm rounded-lg transition-all duration-300"
-                style={{fontFamily: 'sans-serif'}}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg transition-all duration-300 group text-black hover:bg-black/5 profile-icon-btn"
+                style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}
               >
-                <User className="h-4 w-4 text-gray-600 group-hover:text-yellow-600 transition-colors duration-300" />
-                <span className="text-sm font-medium">Login</span>
+                <User className="h-4 w-4 transition-all duration-300 text-black" />
+                <span className="text-sm font-light text-black transition-all duration-300">
+                  Login
+                </span>
               </button>
             )}
             
             {/* Logo image on right */}
             <Link to="/" className="flex items-center ml-4 header-logo-image">
-              <img src="/images/logo.png" alt="Sweet Cake Logo" className="h-12 sm:h-14" />
+              <img src="/images/logo.png" alt="Sweet Cake Logo" className="h-12 sm:h-14 opacity-90" />
             </Link>
           </div>
         </div>
       </div>
     </header>
+    
+    {/* Spark Animations */}
+    {sparks.map(spark => (
+      <SparkAnimation
+        key={spark.id}
+        startPosition={{ x: spark.startX, y: spark.startY }}
+        endPosition={{ x: spark.endX, y: spark.endY }}
+        onAnimationComplete={() => {}}
+        isVisible={true}
+        sparkId={spark.id}
+      />
+    ))}
 
     </>
   );

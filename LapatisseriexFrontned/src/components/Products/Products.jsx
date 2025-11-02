@@ -1,20 +1,26 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
+import { useDispatch, useSelector } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
 import ProductCard from './ProductCard';
 import ProductCardSkeleton from './ProductCardSkeleton';
-import { useProduct } from '../../context/ProductContext/ProductContext';
+import { fetchProducts, makeSelectListByKey, makeSelectLoadingByKey } from '../../redux/productsSlice';
 import { useCategory } from '../../context/CategoryContext/CategoryContext';
 import CategorySwiper from './CategorySwiper';
 import TextCategoryBar from './TextCategoryBar';
 
 const Products = () => {
-  const { fetchProducts } = useProduct();
+  const dispatch = useDispatch();
+  const selectAllProducts = makeSelectListByKey('allProducts');
+  const selectLoadingAll = makeSelectLoadingByKey('allProducts');
+  const allProductsFromRedux = useSelector(selectAllProducts);
+  const loadingFromRedux = useSelector(selectLoadingAll);
   const { categories, fetchCategories, loading: loadingCategories, error: categoryError } = useCategory();
   const location = useLocation();
   
   // Initialize with category from URL if present
   const initialCategory = new URLSearchParams(location.search).get('category');
+  const isSelectingFreeProduct = new URLSearchParams(location.search).get('selectFreeProduct') === 'true';
 
   // Products state organized by categories
   const [productsByCategory, setProductsByCategory] = useState({});
@@ -69,11 +75,13 @@ const Products = () => {
     }
     
     try {
-      const result = await fetchProducts({
+      // Use Redux action to fetch products
+      const result = await dispatch(fetchProducts({
+        key: `category_${categoryId}`,
         limit: 20,
         category: categoryId,
         sort: 'createdAt:-1',
-      });
+      })).unwrap();
       
       // Update the products for this category
       setProductsByCategory(prev => ({
@@ -83,7 +91,7 @@ const Products = () => {
     } catch (err) {
       console.error(`Error loading products for category ${categoryId}:`, err);
     }
-  }, [fetchProducts, productsByCategory]);
+  }, [dispatch, productsByCategory]);
 
   // Measure actual header height dynamically
   useEffect(() => {
@@ -297,10 +305,11 @@ const Products = () => {
       try {
         // Load a minimal set of products for initial display (just 20)
         // This speeds up initial page load significantly
-        const allProductsResult = await fetchProducts({
+        const allProductsResult = await dispatch(fetchProducts({
+          key: 'allProducts',
           limit: 20,
           sort: 'createdAt:-1',
-        });
+        })).unwrap();
         setAllProducts(allProductsResult.products || []);
         
         // Initialize an empty products by category object
@@ -310,15 +319,43 @@ const Products = () => {
         // This ensures the user's selected category loads first
         if (selectedCategory) {
           console.log(`Pre-loading selected category: ${selectedCategory}`);
-          const result = await fetchProducts({
+          const result = await dispatch(fetchProducts({
+            key: `category_${selectedCategory}`,
             limit: 20,
             category: selectedCategory,
             sort: 'createdAt:-1',
-          });
+          })).unwrap();
           productsByCat[selectedCategory] = result.products || [];
           
           // For visible categories near the selected one, prefetch them in the background
           // This will be handled by the intersection observer instead
+        }
+
+        // Proactively prefetch the first few categories to avoid "empty until scroll" perception
+        try {
+          const candidateCategories = (categories || [])
+            .filter(c => c && c._id && c.name !== '__SPECIAL_IMAGES__' && !c.name?.includes('__SPECIAL_IMAGES__') && !c.name?.includes('_SPEC'))
+            .map(c => c._id);
+
+          const toPrefetch = candidateCategories
+            .filter(id => id !== selectedCategory)
+            .slice(0, 2); // prefetch top 2 categories in view order
+
+          await Promise.all(toPrefetch.map(async (catId) => {
+            try {
+              const res = await dispatch(fetchProducts({
+                key: `category_${catId}`,
+                limit: 20,
+                category: catId,
+                sort: 'createdAt:-1',
+              })).unwrap();
+              productsByCat[catId] = res.products || [];
+            } catch (e) {
+              console.warn('Prefetch category failed:', catId, e?.message || e);
+            }
+          }));
+        } catch (e) {
+          console.warn('Category prefetch skipped due to error:', e?.message || e);
         }
         
         setProductsByCategory(productsByCat);
@@ -521,11 +558,8 @@ const Products = () => {
     return (
       <div className="mb-12">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl md:text-2xl font-bold" style={{ 
-            background: 'linear-gradient(135deg, #e0a47d 0%, #c17e5b 100%)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            textShadow: '0px 0px 1px rgba(224, 164, 125, 0.2)'
+          <h2 className="text-xl md:text-2xl font-bold bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] bg-clip-text text-transparent" style={{ 
+            fontFamily: 'system-ui, -apple-system, sans-serif'
           }}>{title}</h2>
         </div>
         
@@ -549,7 +583,7 @@ const Products = () => {
                   transition={{ duration: 0.3 }}
                   className="w-full h-full"
                 >
-                  <ProductCard product={product} className="w-full h-full transition-shadow duration-300 flex flex-col" compact={true} />
+                  <ProductCard product={product} className="w-full h-full transition-shadow duration-300 flex flex-col" compact={true} isSelectingFreeProduct={isSelectingFreeProduct} />
                 </motion.div>
               ))
             )}
@@ -578,7 +612,7 @@ const Products = () => {
                     transition={{ duration: 0.3 }}
                     className="flex-shrink-0 w-64 md:w-80 snap-start"
                   >
-                    <ProductCard product={product} className="w-full transition-shadow duration-300" />
+                    <ProductCard product={product} className="w-full transition-shadow duration-300" isSelectingFreeProduct={isSelectingFreeProduct} />
                   </motion.div>
                 ))
               )}
@@ -593,6 +627,19 @@ const Products = () => {
 
   return (
     <section ref={productsSectionRef} className="bg-white min-h-screen pt-0">{/* Removed any default top padding */}      
+      {/* Free Product Selection Banner */}
+      {isSelectingFreeProduct && (
+        <div className="bg-gradient-to-r from-[#733857] to-[#8d4466] text-white py-4 px-4 md:px-6 text-center shadow-md relative overflow-hidden">
+          {/* Decorative elements */}
+          <div className="absolute top-0 left-0 w-32 h-32 bg-white/5 rounded-full -ml-16 -mt-16"></div>
+          <div className="absolute bottom-0 right-0 w-24 h-24 bg-white/5 rounded-full -mr-12 -mb-12"></div>
+          
+          <p className="text-sm md:text-base font-semibold relative z-10 tracking-wide">
+            🎁 Select Your Free Product! Choose any item below to add it FREE to your cart.
+          </p>
+        </div>
+      )}
+      
       {/* ======================================================================================== */}
       {/* DESKTOP LEFT PADDING CONTROL: Modify the padding values in the className below */}
       {/* Current: md:pl-8 lg:pl-16 xl:pl-24 (increases from 2rem to 3rem to 6rem on larger screens) */}
@@ -626,9 +673,8 @@ const Products = () => {
 
       {/* Always render both bars with smooth opacity transitions */}
       <div
-        className="text-category-bar-container fixed top-0 left-0 right-0 bg-white shadow-lg z-40 border-b border-gray-200 w-full"
+        className="text-category-bar-container sticky top-0 left-0 right-0 bg-white shadow-lg z-40 border-b border-gray-200 w-full"
         style={{
-          top: `${headerHeight}px`,
           zIndex: showTextCategoryBar ? 40 : 30,
           opacity: showTextCategoryBar ? 1 : 0,
           transform: 'translateY(0)',
@@ -645,12 +691,11 @@ const Products = () => {
         />
       </div>
 
-      {/* Fixed category swiper container - must match text bar spacing */}
+      {/* Sticky category swiper container - must match text bar spacing */}
       <div
         ref={(el) => { categorySectionRef.current = el; swiperBarRef.current = el; }}
-        className="fixed top-0 left-0 right-0 bg-white shadow-lg z-30 border-b border-gray-200"
+        className="sticky top-0 left-0 right-0 bg-white shadow-lg z-30 border-b border-gray-200"
         style={{
-          top: `${headerHeight}px`,
           zIndex: !showTextCategoryBar ? 30 : 25,
           opacity: !showTextCategoryBar ? 1 : 0,
           transform: 'translateY(0)',
@@ -669,23 +714,21 @@ const Products = () => {
         </div>
       </div>
 
-      {/* Add padding to content to prevent overlap with fixed bars */}
-      <div className="container mx-auto px-4 pt-0 pb-4" style={{
-        paddingTop: `${Math.max(0, headerHeight + categoryBarHeight - 1)}px` // subtract 1px to counter border rounding
-      }}>
+      {/* Content container - no padding needed with sticky positioning */}
+      <div className="container mx-auto px-4 pt-0 pb-4">
 
         {/* Main Content */}
         {isLoading ? (
           <div className="flex justify-center items-center min-h-screen bg-white">
             <div className="text-center">
               <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-gray-400 mx-auto"></div>
-              <p className="text-black mt-4">Loading delicious products...</p>
+              <p className="bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] bg-clip-text text-transparent mt-4 font-medium">Loading delicious products...</p>
             </div>
           </div>
         ) : error ? (
-          <div className="text-center text-red-500 py-10 bg-white rounded-xl shadow-sm my-6">
-            <div className="text-lg font-medium mb-2">Oops! Something went wrong</div>
-            <div className="text-sm">{error}</div>
+          <div className="text-center py-10 bg-white rounded-xl shadow-sm my-6">
+            <div className="text-lg font-medium mb-2 bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] bg-clip-text text-transparent">Oops! Something went wrong</div>
+            <div className="text-sm bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] bg-clip-text text-transparent">{error}</div>
           </div>
         ) : (
           <AnimatePresence mode="wait">
@@ -698,15 +741,16 @@ const Products = () => {
               <div className="mt-0">
                 {/* Display products by category */}
                 <div className="mt-0">
-                  <h2 className="text-2xl lg:text-3xl font-bold mb-3 md:mb-4" style={{ 
-                    background: 'linear-gradient(135deg, #e0a47d 0%, #c17e5b 100%)',
-                    WebkitBackgroundClip: 'text',
-                    WebkitTextFillColor: 'transparent',
-                    textShadow: '0px 0px 1px rgba(224, 164, 125, 0.2)'
+                  <h2 className="text-2xl lg:text-3xl font-bold mb-3 md:mb-4 bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] bg-clip-text text-transparent" style={{ 
+                    fontFamily: 'system-ui, -apple-system, sans-serif'
                   }}>
                     All Categories
                   </h2>
-                  {categories.map(category => {
+                  {categories.filter(category => 
+                    category.name !== '__SPECIAL_IMAGES__' && 
+                    !category.name?.includes('__SPECIAL_IMAGES__') &&
+                    !category.name?.includes('_SPEC')
+                  ).map(category => {
                     // Show all categories including selected one
                     const isSelectedCategory = category._id === selectedCategory;
                     return (
@@ -714,7 +758,7 @@ const Products = () => {
                         key={category._id} 
                         ref={(el) => setCategoryRef(el, category._id)}
                         id={`category-section-${category._id}`}
-                        className={`mb-12 md:mb-16 ${isSelectedCategory ? 'bg-gray-50 p-4 rounded-xl' : ''}`}
+                        className={`mb-12 md:mb-16 ${isSelectedCategory ? 'p-4 rounded-xl' : ''}`}
                       >
                         {renderProductRow(productsByCategory[category._id], category.name, category._id)}
                       </div>

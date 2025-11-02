@@ -1,317 +1,176 @@
-import asyncHandler from 'express-async-handler';
+import nodemailer from 'nodemailer';
 import User from '../models/userModel.js';
-import { sendOTPEmail, generateOTP, verifyOTP } from '../utils/emailService.js';
 
-// @desc    Send email verification OTP
-// @route   POST /api/auth/email/send-verification
-// @access  Private
-export const sendEmailVerification = asyncHandler(async (req, res) => {
-  const { email } = req.body;
-  const userId = req.user.uid;
-
-  if (!email) {
-    res.status(400);
-    throw new Error('Email is required');
-  }
-
-  // Validate email format
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(email)) {
-    res.status(400);
-    throw new Error('Invalid email format');
-  }
-
-  // Check if email already exists for another user
-  const existingUser = await User.findOne({ email, uid: { $ne: userId } });
-  if (existingUser) {
-    res.status(400);
-    throw new Error('Email already in use by another account');
-  }
-
-  // Generate OTP
-  const otp = generateOTP();
-  
-  // OTP expiration time (10 minutes from now)
-  const otpExpires = new Date();
-  otpExpires.setMinutes(otpExpires.getMinutes() + 10);
-
-  try {
-    // Find user and update with new email and OTP
-    const user = await User.findOne({ uid: userId });
-    
-    if (!user) {
-      res.status(404);
-      throw new Error('User not found');
+// Create transporter (you'll need to configure with your email service)
+const createTransporter = () => {
+  // For development, you can use Gmail or any SMTP service
+  // Make sure to set up environment variables for production
+  return nodemailer.createTransport({
+    service: 'gmail', // or your email service
+    auth: {
+      user: process.env.EMAIL_USER ,
+      pass: process.env.EMAIL_PASS
     }
-
-    // Save email and OTP to user
-    user.email = email;
-    user.isEmailVerified = false;
-    user.emailVerificationOTP = otp;
-    user.emailVerificationOTPExpires = otpExpires;
-    
-    await user.save();
-
-    // Send verification email
-    await sendOTPEmail(email, otp);
-
-    res.status(200).json({
-      success: true,
-      message: 'Verification email sent',
-      emailMasked: maskEmail(email),
-      expiresAt: otpExpires
-    });
-  } catch (error) {
-    console.error('Error sending verification email:', error);
-    res.status(500);
-    throw new Error('Failed to send verification email');
-  }
-});
-
-// @desc    Verify email with OTP
-// @route   POST /api/auth/email/verify
-// @access  Private
-export const verifyEmail = asyncHandler(async (req, res) => {
-  const { otp } = req.body;
-  const userId = req.user.uid;
-
-  if (!otp) {
-    res.status(400);
-    throw new Error('OTP is required');
-  }
-
-  const user = await User.findOne({ uid: userId });
-  
-  if (!user) {
-    res.status(404);
-    throw new Error('User not found');
-  }
-
-  // Check if user has an OTP stored
-  if (!user.emailVerificationOTP) {
-    res.status(400);
-    throw new Error('No verification code found. Please request a new one.');
-  }
-
-  // Check if OTP has expired
-  if (user.emailVerificationOTPExpires < new Date()) {
-    res.status(400);
-    throw new Error('Verification code has expired. Please request a new one.');
-  }
-
-  // Verify OTP
-  if (verifyOTP(otp, user.emailVerificationOTP)) {
-    // Update user as verified
-    user.isEmailVerified = true;
-    user.emailVerificationOTP = undefined;
-    user.emailVerificationOTPExpires = undefined;
-    
-    await user.save();
-
-    res.status(200).json({
-      success: true,
-      message: 'Email verified successfully',
-      email: user.email,
-      isEmailVerified: true
-    });
-  } else {
-    res.status(400);
-    throw new Error('Invalid verification code');
-  }
-});
-
-// @desc    Resend email verification OTP
-// @route   POST /api/auth/email/resend-verification
-// @access  Private
-export const resendEmailVerification = asyncHandler(async (req, res) => {
-  const userId = req.user.uid;
-
-  const user = await User.findOne({ uid: userId });
-  
-  if (!user) {
-    res.status(404);
-    throw new Error('User not found');
-  }
-
-  if (!user.email) {
-    res.status(400);
-    throw new Error('No email associated with this account');
-  }
-
-  // Generate new OTP
-  const otp = generateOTP();
-  
-  // OTP expiration time (10 minutes from now)
-  const otpExpires = new Date();
-  otpExpires.setMinutes(otpExpires.getMinutes() + 10);
-
-  // Update user with new OTP
-  user.emailVerificationOTP = otp;
-  user.emailVerificationOTPExpires = otpExpires;
-  
-  await user.save();
-
-  try {
-    // Send verification email
-    await sendOTPEmail(user.email, otp);
-
-    res.status(200).json({
-      success: true,
-      message: 'Verification email resent',
-      emailMasked: maskEmail(user.email),
-      expiresAt: otpExpires
-    });
-  } catch (error) {
-    console.error('Error resending verification email:', error);
-    res.status(500);
-    throw new Error('Failed to resend verification email');
-  }
-});
-
-// @desc    Get email verification status
-// @route   GET /api/auth/email/verification-status
-// @access  Private
-export const getVerificationStatus = asyncHandler(async (req, res) => {
-  const userId = req.user.uid;
-
-  const user = await User.findOne({ uid: userId });
-  
-  if (!user) {
-    res.status(404);
-    throw new Error('User not found');
-  }
-
-  res.status(200).json({
-    success: true,
-    email: user.email || null,
-    isEmailVerified: user.isEmailVerified || false
   });
-});
+};
 
-// @desc    Update verified email address
-// @route   POST /api/auth/email/update
-// @access  Private
-export const updateEmail = asyncHandler(async (req, res) => {
-  const { email } = req.body;
-  const userId = req.user.uid;
+// Store OTPs temporarily (in production, use Redis or database)
+const otpStore = new Map();
 
-  if (!email) {
-    res.status(400);
-    throw new Error('Email is required');
-  }
+// Generate 6-digit OTP
+const generateOTP = () => {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+};
 
-  // Validate email format
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(email)) {
-    res.status(400);
-    throw new Error('Invalid email format');
-  }
-
-  // Check if email already exists for another user
-  const existingUser = await User.findOne({ email, uid: { $ne: userId } });
-  if (existingUser) {
-    res.status(400);
-    throw new Error('Email already in use by another account');
-  }
-
+// Send OTP to email
+export const sendEmailOtp = async (req, res) => {
   try {
-    // Find user
-    const user = await User.findOne({ uid: userId });
-    
-    if (!user) {
-      res.status(404);
-      throw new Error('User not found');
+    const { email } = req.body;
+    const userId = req.user.uid;
+
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required' });
     }
 
-    // Generate OTP for the new email
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ message: 'Invalid email format' });
+    }
+
+    // Check if email is already verified by another user
+    const existingUser = await User.findOne({ 
+      email: email,
+      emailVerified: true,
+      uid: { $ne: userId }
+    });
+
+    if (existingUser) {
+      return res.status(400).json({ message: 'This email is already verified by another user' });
+    }
+
+    // Generate OTP
     const otp = generateOTP();
-    
-    // OTP expiration time (10 minutes from now)
-    const otpExpires = new Date();
-    otpExpires.setMinutes(otpExpires.getMinutes() + 10);
+    const expiryTime = Date.now() + 10 * 60 * 1000; // 10 minutes
 
-    // Save the new email temporarily and OTP
-    user.newEmail = email;
-    user.emailVerificationOTP = otp;
-    user.emailVerificationOTPExpires = otpExpires;
-    
-    await user.save();
-
-    // Send verification email to the new address
-    await sendOTPEmail(email, otp);
-
-    res.status(200).json({
-      success: true,
-      message: 'Verification email sent to new address',
-      emailMasked: maskEmail(email),
-      expiresAt: otpExpires
+    // Store OTP with expiry
+    otpStore.set(`${userId}_${email}`, {
+      otp,
+      expiryTime,
+      attempts: 0
     });
+
+    // For development, log the OTP (remove in production)
+    console.log(`OTP for ${email}: ${otp}`);
+
+    try {
+      // Send email (comment out if you don't have email configured)
+      const transporter = createTransporter();
+      
+      const mailOptions = {
+        from: process.env.EMAIL_USER || 'noreply@lapatisserie.com',
+        to: email,
+        subject: 'Email Verification OTP - La Patisserie',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #333;">Email Verification</h2>
+            <p>Hello,</p>
+            <p>Your OTP for email verification is:</p>
+            <div style="background-color: #f0f0f0; padding: 20px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 2px; margin: 20px 0;">
+              ${otp}
+            </div>
+            <p style="color: #666;">This OTP is valid for 10 minutes.</p>
+            <p>If you didn't request this verification, please ignore this email.</p>
+            <p>Best regards,<br>La Patisserie Team</p>
+          </div>
+        `
+      };
+
+      await transporter.sendMail(mailOptions);
+      console.log(`OTP email sent to ${email}`);
+    } catch (emailError) {
+      console.error('Email sending failed:', emailError);
+      // Continue anyway for development - OTP is logged to console
+    }
+
+    res.status(200).json({ 
+      message: 'OTP sent successfully',
+      // For development only - remove in production
+      otp: process.env.NODE_ENV === 'development' ? otp : undefined
+    });
+
   } catch (error) {
-    console.error('Error sending verification email:', error);
-    res.status(500);
-    throw new Error('Failed to send verification email');
+    console.error('Send OTP error:', error);
+    res.status(500).json({ message: 'Failed to send OTP' });
   }
-});
-
-// @desc    Verify new email with OTP and update user's email
-// @route   POST /api/auth/email/verify-update
-// @access  Private
-export const verifyNewEmail = asyncHandler(async (req, res) => {
-  const { otp } = req.body;
-  const userId = req.user.uid;
-
-  if (!otp) {
-    res.status(400);
-    throw new Error('OTP is required');
-  }
-
-  const user = await User.findOne({ uid: userId });
-  
-  if (!user) {
-    res.status(404);
-    throw new Error('User not found');
-  }
-
-  // Check if user has a new email and OTP stored
-  if (!user.newEmail || !user.emailVerificationOTP) {
-    res.status(400);
-    throw new Error('No email update request found. Please try again.');
-  }
-
-  // Check if OTP has expired
-  if (user.emailVerificationOTPExpires < new Date()) {
-    res.status(400);
-    throw new Error('Verification code has expired. Please request a new one.');
-  }
-
-  // Verify OTP
-  if (verifyOTP(otp, user.emailVerificationOTP)) {
-    // Update user's email
-    user.email = user.newEmail;
-    user.isEmailVerified = true;
-    user.newEmail = undefined;
-    user.emailVerificationOTP = undefined;
-    user.emailVerificationOTPExpires = undefined;
-    
-    await user.save();
-
-    res.status(200).json({
-      success: true,
-      message: 'Email updated and verified successfully',
-      email: user.email,
-      isEmailVerified: true
-    });
-  } else {
-    res.status(400);
-    throw new Error('Invalid verification code');
-  }
-});
-
-// Helper function to mask email for privacy
-const maskEmail = (email) => {
-  const [username, domain] = email.split('@');
-  const maskedUsername = username.charAt(0) + 
-                         '*'.repeat(Math.max(username.length - 2, 1)) + 
-                         username.charAt(username.length - 1);
-  return `${maskedUsername}@${domain}`;
 };
+
+// Verify OTP
+export const verifyEmailOtp = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    const userId = req.user.uid;
+
+    if (!email || !otp) {
+      return res.status(400).json({ message: 'Email and OTP are required' });
+    }
+
+    const storedData = otpStore.get(`${userId}_${email}`);
+
+    if (!storedData) {
+      return res.status(400).json({ message: 'OTP not found or expired' });
+    }
+
+    // Check if OTP has expired
+    if (Date.now() > storedData.expiryTime) {
+      otpStore.delete(`${userId}_${email}`);
+      return res.status(400).json({ message: 'OTP has expired' });
+    }
+
+    // Check attempt limit
+    if (storedData.attempts >= 3) {
+      otpStore.delete(`${userId}_${email}`);
+      return res.status(400).json({ message: 'Too many incorrect attempts. Please request a new OTP.' });
+    }
+
+    // Verify OTP
+    if (storedData.otp !== otp) {
+      storedData.attempts += 1;
+      return res.status(400).json({ 
+        message: 'Invalid OTP',
+        attemptsLeft: 3 - storedData.attempts
+      });
+    }
+
+    // OTP is correct - update user
+    const user = await User.findOneAndUpdate(
+      { uid: userId },
+      { 
+        email: email,
+        emailVerified: true,
+        emailVerifiedAt: new Date()
+      },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Clean up OTP
+    otpStore.delete(`${userId}_${email}`);
+
+    res.status(200).json({ 
+      message: 'Email verified successfully',
+      user: {
+        email: user.email,
+        emailVerified: user.emailVerified,
+        emailVerifiedAt: user.emailVerifiedAt
+      }
+    });
+
+  } catch (error) {
+    console.error('Verify OTP error:', error);
+    res.status(500).json({ message: 'Failed to verify OTP' });
+  }
+}; 

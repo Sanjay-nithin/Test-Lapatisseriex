@@ -1,24 +1,90 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { FaTrash, FaArrowLeft, FaMapMarkerAlt, FaTag, FaShoppingCart, FaExclamationTriangle } from 'react-icons/fa';
-import { useCart } from '../../context/CartContext';
-import { useAuth } from '../../context/AuthContext/AuthContext';
+import { FaTrash, FaArrowLeft, FaMapMarkerAlt, FaShoppingCart, FaExclamationTriangle, FaBuilding } from 'react-icons/fa';
+import { motion } from 'framer-motion';
+import { useCart } from '../../hooks/useCart';
+import { useAuth } from '../../hooks/useAuth';
 import { useLocation } from '../../context/LocationContext/LocationContext';
 import { useShopStatus } from '../../context/ShopStatusContext';
 import ShopClosureOverlay from '../common/ShopClosureOverlay';
+import AnimatedButton from '../common/AnimatedButton';
+import { toast } from 'react-toastify';
+import { calculatePricing, calculateCartTotals, formatCurrency } from '../../utils/pricingUtils';
+import { formatVariantLabel } from '../../utils/variantUtils';
+import OfferBadge from '../common/OfferBadge';
+import { getOrderExperienceInfo } from '../../utils/orderExperience';
+import FreeProductBanner from './FreeProductBanner';
+import FreeProductModal from './FreeProductModal';
+import { removeFreeProductFromCart } from '../../services/freeProductService';
+
+const deriveEggStatus = (productLike) => {
+  if (!productLike) return null;
+
+  if (typeof productLike.hasEgg === 'boolean') {
+    return productLike.hasEgg;
+  }
+
+  const candidates = [
+    productLike?.hasEgg,
+    productLike?.importantField?.value,
+    productLike?.importantField?.name,
+    productLike?.eggType,
+    productLike?.eggLabel,
+    productLike?.egg,
+    productLike?.isEgg,
+    productLike?.extraFields?.egg,
+    productLike?.extraFields?.Egg,
+    productLike?.extraFields?.eggType,
+    productLike?.extraFields?.EggType
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (typeof candidate === 'boolean') {
+      return candidate;
+    }
+    if (typeof candidate === 'number') {
+      if (candidate === 1) return true;
+      if (candidate === 0) return false;
+    }
+    const normalized = String(candidate).trim().toLowerCase();
+    if (!normalized) continue;
+    if (['true', 'yes', 'y', '1'].includes(normalized)) {
+      return true;
+    }
+    if (['false', 'no', 'n', '0'].includes(normalized)) {
+      return false;
+    }
+    if (
+      normalized.includes('eggless') ||
+      normalized.includes('no egg') ||
+      normalized.includes('egg free') ||
+      normalized.includes('egg-free') ||
+      normalized.includes('without egg') ||
+      normalized.includes('pure veg') ||
+      normalized.includes('veg only')
+    ) {
+      return false;
+    }
+    if (
+      normalized.includes('with egg') ||
+      normalized.includes('contains egg') ||
+      normalized.includes('has egg') ||
+      normalized.includes('egg-based')
+    ) {
+      return true;
+    }
+    if (normalized.includes('egg')) {
+      return true;
+    }
+  }
+
+  return null;
+};
 
 const Cart = () => {
   const { isOpen, checkShopStatusNow } = useShopStatus();
-  const { 
-    cartItems, 
-    cartTotal, 
-    updateQuantity, 
-    removeFromCart, 
-    applyCoupon,
-    removeCoupon,
-    appliedCoupon,
-    couponDiscount
-  } = useCart();
+  const { cartItems, updateQuantity, removeFromCart, pendingOperations, getCartItem, refreshCart } = useCart();
   
   // Use our hooks
   const { user } = useAuth();
@@ -30,41 +96,223 @@ const Cart = () => {
     hasValidDeliveryLocation
   } = useLocation();
   
-  const [couponCode, setCouponCode] = useState('');
-  const [couponMessage, setCouponMessage] = useState('');
-  const [couponError, setCouponError] = useState(false);
+  const [stockError, setStockError] = useState('');
+  const [showFreeProductModal, setShowFreeProductModal] = useState(false);
+  // Expiry countdown
+  const [now, setNow] = useState(Date.now());
+  const removedRef = useRef(new Set());
+  const EXPIRY_SECONDS_DEFAULT = Number(import.meta.env.VITE_CART_EXPIRY_SECONDS || 86400); // 24 hours default
+
+  // Fetch fresh cart data when component mounts
+  useEffect(() => {
+    if (user) {
+      console.log('🛒 Cart component mounted, fetching fresh cart data...');
+      refreshCart();
+    }
+  }, [user, refreshCart]);
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const timeLeftForItem = useCallback((item) => {
+    try {
+      const expiresAt = item?.expiresAt ? new Date(item.expiresAt) : null;
+      let msLeft;
+      if (expiresAt) {
+        msLeft = expiresAt.getTime() - now;
+      } else {
+        const added = item?.addedAt ? new Date(item.addedAt) : new Date();
+        msLeft = added.getTime() + EXPIRY_SECONDS_DEFAULT * 1000 - now;
+      }
+      return Math.max(0, msLeft || 0);
+    } catch {
+      return 0;
+    }
+  }, [now]);
+
+  const formatHMS = (ms) => {
+    const totalSec = Math.max(0, Math.floor(ms / 1000));
+    const h = String(Math.floor(totalSec / 3600)).padStart(2, '0');
+    const m = String(Math.floor((totalSec % 3600) / 60)).padStart(2, '0');
+    const s = String(totalSec % 60).padStart(2, '0');
+    return `${h}:${m}:${s}`;
+  };
+
+  // Auto-remove when countdown reaches zero
+  useEffect(() => {
+    if (!Array.isArray(cartItems) || cartItems.length === 0) return;
+    cartItems.forEach((item) => {
+      const pid = item?.productId;
+      if (!pid) return;
+      const left = timeLeftForItem(item);
+      if (left <= 0 && !removedRef.current.has(pid)) {
+        removedRef.current.add(pid);
+        removeFromCart(pid).finally(() => {
+          toast.info(`Removed "${item.name || 'item'}" from your cart (expired). Click to view.`, {
+            onClick: () => { try { window.location.href = `/products/${pid}`; } catch {} }
+          });
+        });
+      }
+    });
+  }, [now, cartItems, removeFromCart]);
+  
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [selectedLocationId, setSelectedLocationId] = useState('');
+  const [jellyAnimations, setJellyAnimations] = useState({});
+  const [animationDirections, setAnimationDirections] = useState({});
+  
+  // Refs for debouncing - one per product
+  const lastQuantityChangeTimes = useRef({});
   
   const navigate = useNavigate();
 
-  // Delivery charge (free above 500, else 49)
-  const deliveryCharge = cartTotal >= 500 ? 0 : 49;
+  // Handle removing items - check if it's a free product
+  const handleRemoveItem = async (item) => {
+    try {
+      if (item.isFreeProduct) {
+        // Call free product API to remove and reset selectedFreeProductId
+        await removeFreeProductFromCart();
+        toast.success('Free product removed from cart');
+      }
+      // Always call the regular removeFromCart to update the local cart
+      await removeFromCart(item.productId);
+    } catch (error) {
+      console.error('Error removing item:', error);
+      toast.error('Failed to remove item');
+    }
+  };
+
+  const orderExperience = useMemo(() => getOrderExperienceInfo(user), [user]);
+
+  // Helper function to check if user can proceed to checkout
+  const canProceedToCheckout = () => {
+    return user?.hostel && user.hostel._id && user.hostel.name;
+  };
+
+  // Helper function to get checkout button text
+  const getCheckoutButtonText = () => {
+    if (!user?.hostel || !user.hostel._id || !user.hostel.name) {
+      return 'Select Hostel';
+    }
+    return 'Proceed to Checkout';
+  };
+
+  // Helper to derive availability from product data stored in cart item
+  const getItemAvailability = (item) => {
+    try {
+      // Use productDetails from the cart item instead of global products array
+      const prod = item.productDetails;
+      if (!prod) {
+        return { unavailable: false, tracks: false, stock: Infinity, variantIndex: 0 };
+      }
+      
+      const vi = Number.isInteger(item?.productDetails?.variantIndex) ? item.productDetails.variantIndex : 0;
+      const variant = prod?.variants?.[vi];
+      if (!variant) {
+        return { unavailable: false, tracks: false, stock: Infinity, variantIndex: vi };
+      }
+      
+      const tracks = !!variant?.isStockActive;
+      const stock = tracks ? (variant?.stock ?? 0) : Infinity;
+      const unavailable = tracks && stock <= 0;
+      
+      return { unavailable, tracks, stock, variantIndex: vi };
+    } catch (error) {
+      console.error('Error in getItemAvailability:', error);
+      return { unavailable: false, tracks: false, stock: Infinity, variantIndex: 0 };
+    }
+  };
+
+  // Helper function to calculate cart totals using admin pricing logic
+  const cartTotals = useMemo(() => {
+    const totals = calculateCartTotals(cartItems);
+    // Ensure all totals are valid numbers
+    return {
+      finalTotal: isNaN(totals.finalTotal) ? 0 : totals.finalTotal,
+      originalTotal: isNaN(totals.originalTotal) ? 0 : totals.originalTotal,
+      totalSavings: isNaN(totals.totalSavings) ? 0 : totals.totalSavings,
+      averageDiscountPercentage: isNaN(totals.averageDiscountPercentage) ? 0 : totals.averageDiscountPercentage
+    };
+  }, [cartItems]);
+
+  // Extract individual totals for easier use
+  const { finalTotal: discountedCartTotal, originalTotal, totalSavings, averageDiscountPercentage } = cartTotals;
+
+  // Configuration constants - should ideally come from admin settings
+  const FREE_DELIVERY_THRESHOLD = 500; // Free delivery above ₹500
+  const DEFAULT_DELIVERY_CHARGE = 49; // Default delivery charge
+
+  // Calculate delivery charge based on user's location
+  const deliveryCharge = useMemo(() => {
+    // If cart total is above threshold, delivery is free regardless of location
+    if (discountedCartTotal >= FREE_DELIVERY_THRESHOLD) {
+      return 0;
+    }
+    
+    // Get user's selected location
+    const userLocationId = user?.location?._id || user?.location?.locationId || user?.locationId;
+    
+    // Try to get user location - first check if location object exists directly, then search in locations array
+    const userLocation = user?.location || 
+      (userLocationId && locations?.length > 0 && locations.find(loc => loc._id === userLocationId));
+    
+    if (userLocation) {
+      const charge = userLocation.deliveryCharge ?? DEFAULT_DELIVERY_CHARGE; // Use nullish coalescing to handle 0 values
+      return isNaN(charge) ? DEFAULT_DELIVERY_CHARGE : charge;
+    }
+    // Default delivery charge if no location selected
+    return DEFAULT_DELIVERY_CHARGE;
+  }, [discountedCartTotal, user, locations]);
   
-  // Tax calculation (5% of total)
-  const taxAmount = cartTotal * 0.05;
-  
-  // Grand total
-  const grandTotal = cartTotal + deliveryCharge + taxAmount - couponDiscount;
-  
-  // Handle coupon application
-  const handleApplyCoupon = () => {
-    if (!couponCode.trim()) {
-      setCouponMessage('Please enter a coupon code');
-      setCouponError(true);
+  // Grand total using discounted cart total only (without delivery charge)
+  const grandTotal = useMemo(() => {
+    return isNaN(discountedCartTotal) ? 0 : Math.max(0, discountedCartTotal);
+  }, [discountedCartTotal]);
+
+  // Exact same quantity change logic as ProductCard and ProductDisplayPage
+  const handleQuantityChangeWithAnimation = useCallback((productId, delta, maxStock) => {
+    if (delta === 0 || !productId) return;
+    
+    // Debounce rapid clicks - 50ms like ProductDisplayPage
+    const now = Date.now();
+    const lastTime = lastQuantityChangeTimes.current[productId] || 0;
+    const timeSinceLastClick = now - lastTime;
+    
+    if (timeSinceLastClick < 50) return;
+    
+    lastQuantityChangeTimes.current[productId] = now;
+
+    // Get current quantity
+    const item = getCartItem(productId);
+    const numericQuantity = Number(item?.quantity ?? 0);
+    const currentQuantity = Number.isFinite(numericQuantity) ? numericQuantity : 0;
+    const newQuantity = Math.max(0, currentQuantity + delta);
+
+    if (newQuantity === currentQuantity) {
+      return;
+    }
+
+    // Check stock limits
+    if (maxStock !== undefined && newQuantity > maxStock) {
+      setStockError(`Cannot add more items. Only ${maxStock} available in stock.`);
+      setTimeout(() => setStockError(''), 3000);
       return;
     }
     
-    const result = applyCoupon(couponCode);
-    setCouponMessage(result.message);
-    setCouponError(!result.success);
+    // Set animation direction and trigger jelly animation IMMEDIATELY for instant feedback
+    setAnimationDirections(prev => ({ ...prev, [productId]: delta > 0 ? 'up' : 'down' }));
+    setJellyAnimations(prev => ({ ...prev, [productId]: (prev[productId] || 0) + 1 }));
     
-    // Clear message after 3 seconds
-    setTimeout(() => {
-      setCouponMessage('');
-    }, 3000);
-  };
-  
+    // Fire-and-forget: Update quantity without blocking UI (non-blocking, instant updates)
+    updateQuantity(productId, newQuantity).catch(error => {
+      console.error('Error updating quantity:', error);
+      setStockError(error?.message || 'Failed to update quantity');
+      setTimeout(() => setStockError(''), 3000);
+    });
+  }, [updateQuantity, getCartItem]);
+
   // Handle location change
   const handleChangeLocation = async () => {
     if (selectedLocationId) {
@@ -75,35 +323,63 @@ const Cart = () => {
   
   // Handle checkout
   const handleCheckout = async () => {
-    // First check if shop is still open in real-time
-    const currentStatus = await checkShopStatusNow();
-    
-    if (!currentStatus.isOpen) {
-      // Shop is now closed, the UI should update automatically
-      return;
-    }
-    
-    if (hasValidDeliveryLocation()) {
-      navigate('/payment');
-    } else {
-      setShowLocationModal(true);
+    try {
+      // Block checkout if any item is out of stock
+      const hasUnavailable = cartItems.some((i) => getItemAvailability(i).unavailable);
+      if (hasUnavailable) {
+        toast.error('Some items are out of stock. Please remove them before checkout.');
+        return;
+      }
+      
+      // Validate hostel selection
+      if (!user?.hostel || !user.hostel._id || !user.hostel.name) {
+        toast.error('Please select your hostel from your profile before proceeding to checkout.');
+        return;
+      }
+      
+      // Check shop status before proceeding
+      const currentStatus = await checkShopStatusNow();
+      
+      if (!currentStatus.isOpen) {
+        // Shop is closed, the UI will show the overlay
+        return;
+      }
+      
+      // Go to the checkout page
+      navigate('/checkout');
+    } catch (error) {
+      console.error('Error during checkout:', error);
     }
   };
-  
+
+  const handleNavigateToProduct = (productId) => {
+    if (!productId) {
+      toast.error('Product details unavailable');
+      return;
+    }
+    navigate(`/product/${productId}`);
+  };
   // If cart is empty
   if (cartItems.length === 0) {
     return (
-      <div className="container mx-auto px-4 py-8 min-h-screen">
-        <div className="max-w-3xl mx-auto bg-white rounded-lg shadow-md p-8">
-          <div className="text-center py-10">
-            <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center mx-auto mb-6">
-              <FaShoppingCart className="text-white text-4xl" />
+      <div className="min-h-screen bg-white px-4 py-20 flex items-center justify-center">
+        <div className="max-w-2xl w-full text-center space-y-10">
+          <div className="flex flex-col items-center gap-6">
+            <div className="flex h-20 w-20 items-center justify-center border border-[#733857]/20">
+              <FaShoppingCart className="text-3xl text-[#733857]" />
             </div>
-            <h2 className="text-2xl font-semibold text-black mb-2">Your cart is empty</h2>
-            <p className="text-black mb-8">Looks like you haven't added any items to your cart yet</p>
-            <Link 
-              to="/products" 
-              className="bg-black text-white font-medium py-3 px-8 rounded-md transition-colors"
+            <div className="space-y-2">
+              <p className="text-xs uppercase tracking-[0.35em] text-[#733857]/60">Cart Status</p>
+              <h2 className="text-3xl font-light tracking-wide text-[#1a1a1a]">Your cart is empty</h2>
+              <p className="text-sm sm:text-base text-gray-500 max-w-md mx-auto leading-relaxed">
+                Looks like you haven&apos;t added anything yet. Explore today&apos;s specials and reserve your favourites before they sell out.
+              </p>
+            </div>
+          </div>
+          <div className="flex justify-center">
+            <Link
+              to="/products"
+              className="inline-flex items-center gap-2 border border-[#733857] px-6 py-3 text-sm font-medium tracking-wide text-[#733857] transition-colors duration-300 hover:bg-[#733857] hover:text-white"
             >
               Browse Products
             </Link>
@@ -115,313 +391,450 @@ const Cart = () => {
   
   return (
     <ShopClosureOverlay overlayType="page" showWhenClosed={!isOpen}>
-      <div className="container mx-auto px-4 py-8 min-h-screen">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex items-center mb-6">
-          <Link to="/products" className="flex items-center text-black transition-colors">
-            <FaArrowLeft className="mr-2" />
-            <span>Continue Shopping</span>
-          </Link>
-          <h1 className="text-2xl font-bold text-center flex-grow">Shopping Box</h1>
-        </div>
-        
-        <div className="lg:grid lg:grid-cols-12 lg:gap-8">
-          {/* Cart Items */}
-          <div className="lg:col-span-8 mb-8 lg:mb-0">
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex justify-between items-center pb-4 border-b border-white mb-6">
-                <h2 className="font-semibold text-lg text-black">Cart Items ({cartItems.length})</h2>
-                <div className="flex items-center text-sm">
-                  <FaMapMarkerAlt className={`${hasValidDeliveryLocation() ? 'text-black' : 'text-amber-500'} mr-1`} />
-                  <span className="mr-2">{user?.location ? `${user.location.area}, ${user.location.city}` : 'Select Location'}</span>
-                  <button 
-                    className="text-black"
-                    onClick={() => setShowLocationModal(true)}
-                  >
-                    {user?.location ? 'Change' : 'Select'}
-                  </button>
+      <div className="min-h-screen bg-white">
+        <div className="w-full px-4 md:px-6 py-6 md:py-8">
+          {/* Header */}
+          <div className="mb-6 md:mb-8">
+            <h1 className="text-xl font-medium text-gray-900 mb-1" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+              Your Cart
+            </h1>
+            <div className="flex items-center gap-3">
+              <p className="text-sm text-gray-600">
+                {cartItems.length} {cartItems.length === 1 ? 'item' : 'items'}
+              </p>
+              <span
+                className="text-sm font-semibold"
+                style={{ color: orderExperience.color, fontFamily: 'system-ui, -apple-system, sans-serif' }}
+              >
+                {orderExperience.label}
+              </span>
+            </div>
+          </div>
+          
+          {/* Free Product Banner */}
+          <FreeProductBanner onSelectFreeProduct={() => setShowFreeProductModal(true)} />
+          
+          <div className="w-full">
+            {/* Cart Items */}
+            <div className="w-full">
+              {/* Table block wrapper so header and rows share padding */}
+              <div className="bg-white rounded-lg p-4">
+                {/* Table Header - Desktop Only */}
+                <div className="hidden md:grid grid-cols-12 gap-4 border-b border-gray-200 pb-4 mb-6">
+                <div className="col-span-6">
+                  <span className="text-sm font-medium text-gray-600">Item</span>
+                </div>
+                <div className="col-span-2 text-center">
+                  <span className="text-sm font-medium text-gray-600">Price</span>
+                </div>
+                <div className="col-span-2 text-center">
+                  <span className="text-sm font-medium text-gray-600">Quantity</span>
+                </div>
+                <div className="col-span-2 text-center">
+                  <span className="text-sm font-medium text-gray-600">Total</span>
                 </div>
               </div>
               
-              {/* Location Warning */}
-              {!hasValidDeliveryLocation() && (
-                <div className="bg-amber-50 text-amber-800 border border-amber-200 rounded-md p-4 mb-6">
-                  <div className="flex items-start">
-                    <FaExclamationTriangle className="text-amber-500 mt-0.5 mr-2" />
-                    <div>
-                      <p className="font-medium">Delivery location required</p>
-                      <p className="text-sm mt-1">Please select a valid delivery location to place your order</p>
-                    </div>
-                  </div>
+              {/* Stock Errors and Warnings */}
+              
+              {cartItems.some((i) => getItemAvailability(i).unavailable) && (
+                <div className="bg-red-50 text-red-700 border border-red-200 rounded-md p-3 text-sm mb-4">
+                  One or more items are out of stock. Remove them to proceed to checkout.
                 </div>
               )}
               
-              {/* Cart item list */}
-              <div className="space-y-6">
-                {cartItems.map((item) => (
-                  <div key={`${item._id || item.id}-${JSON.stringify(item.options)}`} className="flex flex-col md:flex-row border-b border-white pb-6">
-                    <div className="md:w-1/4 mb-4 md:mb-0">
-                      <img 
-                        src={item.image || item.images?.[0] || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjIwMCIgdmlld0JveD0iMCAwIDMwMCAyMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIzMDAiIGhlaWdodD0iMjAwIiBmaWxsPSIjRjNGNEY2Ii8+CjxwYXRoIGQ9Ik0xMzAgNzBIMTcwVjEzMEgxMzBWNzBaIiBmaWxsPSIjRDFENUQ5Ii8+CjxwYXRoIGQ9Ik0xNDAgODBIMTYwVjEyMEgxNDBWODBaIiBmaWxsPSIjOTlBMkE5Ii8+Cjx0ZXh0IHg9IjE1MCIgeT0iMTYwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjNjc3MDc5IiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiPk5vIEltYWdlPC90ZXh0Pgo8L3N2Zz4='} 
-                        alt={item.name} 
-                        className="w-full h-32 object-cover rounded-md"
-                      />
-                    </div>
-                    <div className="md:w-3/4 md:pl-6">
-                      <div className="flex justify-between mb-2">
-                        <h3 className="font-medium text-black">{item.name}</h3>
-                        <button 
-                          onClick={() => removeFromCart(item._id || item.id, item.options)}
-                          className="text-black hover:text-red-500 transition-colors"
-                        >
-                          <FaTrash />
-                        </button>
-                      </div>
-                      
-                      <div className="mb-4">
-                        {item.options?.weight && (
-                          <p className="text-sm text-black">Weight: {item.options.weight}</p>
-                        )}
-                        {item.options?.flavor && (
-                          <p className="text-sm text-black">Flavor: {item.options.flavor}</p>
-                        )}
-                        {item.options?.message && (
-                          <p className="text-sm text-black">Message: "{item.options.message}"</p>
-                        )}
-                      </div>
-                      
-                      <div className="flex justify-between items-center">
-                        <div className="flex items-center">
+              {stockError && (
+                <div className="bg-red-50 text-red-600 p-3 rounded-md mb-4 text-sm">
+                  {stockError}
+                </div>
+              )}
+              
+              {/* Cart Items - Table Layout */}
+              <div>
+                {cartItems.map((item) => {
+                  const { unavailable, tracks, stock } = getItemAvailability(item);
+                  const maxReached = tracks && item.quantity >= stock;
+                  const canIncrease = !unavailable && !maxReached;
+                  // Removed pendingOp check to allow instant, non-blocking updates
+                  
+                  // Get variant data
+                  const prod = item.productDetails || item.product || item;
+                  const vi = Number.isInteger(item?.variantIndex) ? item.variantIndex : 0;
+                  const variant = prod?.variants?.[vi];
+                  const eggFromProduct = deriveEggStatus(prod);
+                  const eggFromVariant = deriveEggStatus(prod?.selectedVariant);
+                  const eggFromItem = deriveEggStatus(item);
+                  const resolvedEgg = eggFromProduct ?? eggFromVariant ?? eggFromItem;
+                  const hasEgg = typeof resolvedEgg === 'boolean' ? resolvedEgg : false;
+                  const eggLabel = hasEgg ? 'Egg' : 'Eggless';
+                  const variantLabel = formatVariantLabel(prod?.selectedVariant)
+                    || prod?.variantLabel
+                    || (Array.isArray(prod?.variants) && prod.variants[vi]?.variantLabel)
+                    || formatVariantLabel(Array.isArray(prod?.variants) && prod.variants[vi]);
+                  
+                  if (!variant) return null;
+
+                  const pricing = calculatePricing(variant);
+                  // Free products should have 0 price
+                  const unitFinalPrice = item.isFreeProduct ? 0 : (Number.isFinite(pricing.finalPrice) ? pricing.finalPrice : 0);
+                  const unitMrp = item.isFreeProduct ? 0 : (Number.isFinite(pricing.mrp) ? pricing.mrp : unitFinalPrice);
+                  const discountPercentage = Number.isFinite(pricing.discountPercentage) ? pricing.discountPercentage : 0;
+                  const hasDiscount = discountPercentage > 0;
+                  const lineTotal = unitFinalPrice * Number(item.quantity || 0);
+                  
+                  return (
+                    <div key={item.id} className="md:grid md:grid-cols-12 gap-4 items-center py-4 bg-white border-b border-[#733857] mb-5 pb-5">
+                      {/* Mobile Layout */}
+                      <div className="md:hidden flex flex-col w-full">
+                        <div className="flex items-center gap-4">
+                          {/* Product Image */}
+                          <div className="flex flex-col items-center">
+                            <button
+                              type="button"
+                              onClick={() => handleNavigateToProduct(item.productId)}
+                              className="w-16 h-16 flex-shrink-0 rounded-lg overflow-hidden focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#733857] cursor-pointer"
+                              aria-label="View product details"
+                            >
+                              <img 
+                                src={item.image || '/placeholder-image.jpg'} 
+                                alt={item.name || 'Product'} 
+                                className="w-full h-full object-cover"
+                              />
+                            </button>
+                            {/* Tiny countdown (mobile) */}
+                            <p className="text-[10px] leading-3 text-gray-400 mt-1">
+                              Removes in: {formatHMS(timeLeftForItem(item))}
+                            </p>
+                          </div>
+                          
+                          {/* Product Name & Price */}
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-medium text-[#733857]" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+                                {item.name || 'Product'}
+                              </h3>
+                              {item.isFreeProduct && (
+                                <span className="bg-green-500 text-white text-xs font-bold px-2 py-0.5 rounded">
+                                  FREE
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 text-sm text-gray-700 font-medium">
+                              <span>₹{unitFinalPrice.toFixed(0)} each</span>
+                              {hasDiscount && (
+                                <span className="text-xs text-gray-500 line-through">₹{unitMrp.toFixed(0)}</span>
+                              )}
+                            </div>
+                            {hasDiscount && (
+                              <div className="mt-1">
+                                <OfferBadge label={`${discountPercentage}% OFF`} className="text-[10px]" />
+                              </div>
+                            )}
+                            <p className="text-xs text-gray-600 mt-1">
+                              Variant: <span className="font-medium text-gray-800">{variantLabel || 'Default'}</span>
+                            </p>
+                            <p className="text-xs text-gray-600 mt-1">
+                              Egg (or) Eggless: <span className="font-medium text-gray-800">{eggLabel}</span>
+                            </p>
+                          </div>
+                          
+                          {/* Remove Button */}
                           <button 
-                            onClick={() => updateQuantity(item._id || item.id, item.quantity - 1, item.options)}
-                            className="w-8 h-8 rounded-l-md bg-white flex items-center justify-center border border-white"
+                            onClick={() => handleRemoveItem(item)}
+                            className="text-gray-600 hover:text-red-500 transition-colors"
+                            aria-label="Remove item"
                           >
-                            -
+                            Remove
                           </button>
-                          <input
-                            type="text"
-                            className="w-10 h-8 text-center text-sm border-t border-b border-white"
-                            value={item.quantity}
-                            readOnly
-                          />
+                        </div>
+                        
+                        {/* Quantity Controls - Mobile */}
+                        <div className="mt-3 flex justify-between items-center">
+                          <div className="flex items-center border border-[#733857] rounded-lg bg-white">
+                            <button 
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleQuantityChangeWithAnimation(item.productId, -1, stock);
+                              }}
+                              className="w-8 h-8 flex items-center justify-center text-[#733857] hover:bg-[#733857]/10 transition-all duration-150 rounded-l-lg font-light select-none"
+                              disabled={item.quantity <= 1}
+                              style={{ fontFamily: 'system-ui, -apple-system, sans-serif', userSelect: 'none' }}
+                            >
+                              −
+                            </button>
+                            <motion.span
+                              key={`jelly-mobile-cart-${item.productId}-${jellyAnimations[item.productId] || 0}`}
+                              initial={{ 
+                                scaleX: 1, 
+                                scaleY: 1,
+                                y: animationDirections[item.productId] === 'up' ? -10 : animationDirections[item.productId] === 'down' ? 10 : 0,
+                                opacity: animationDirections[item.productId] ? 0.7 : 1
+                              }}
+                              animate={{
+                                scaleX: [1, 1.15, 0.95, 1.03, 1],
+                                scaleY: [1, 0.85, 1.05, 0.98, 1],
+                                y: [
+                                  animationDirections[item.productId] === 'up' ? -10 : animationDirections[item.productId] === 'down' ? 10 : 0,
+                                  animationDirections[item.productId] === 'up' ? -5 : animationDirections[item.productId] === 'down' ? 5 : 0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                opacity: [
+                                  animationDirections[item.productId] !== 'none' ? 0.7 : 1,
+                                  1,
+                                  1,
+                                  1,
+                                  1
+                                ]
+                              }}
+                              transition={{
+                                duration: 0.6,
+                                times: [0, 0.2, 0.5, 0.8, 1],
+                                ease: "easeInOut"
+                              }}
+                              className="px-3 py-1 font-light text-sm min-w-[2.5rem] text-center border-l border-r border-[#733857] text-[#733857] inline-block select-none"
+                              style={{ fontFamily: 'system-ui, -apple-system, sans-serif', userSelect: 'none' }}
+                            >
+                              {item.quantity}
+                            </motion.span>
+                            <button 
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleQuantityChangeWithAnimation(item.productId, 1, stock);
+                              }}
+                              className="w-8 h-8 flex items-center justify-center text-[#733857] hover:bg-[#733857]/10 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed rounded-r-lg font-light select-none"
+                              disabled={!canIncrease}
+                              style={{ fontFamily: 'system-ui, -apple-system, sans-serif', userSelect: 'none' }}
+                            >
+                              +
+                            </button>
+                          </div>
+                          
+                          {/* Item Total - Mobile */}
+                          <div className="font-medium text-right">
+                            <div>₹{lineTotal.toFixed(0)}</div>
+                            {hasDiscount && (
+                              <div className="text-xs text-gray-500 line-through">
+                                ₹{(unitMrp * item.quantity).toFixed(0)}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Desktop Layout */}
+                      {/* Product Info - spans 6 */}
+                      <div className="hidden md:flex col-span-6 items-center gap-4 pl-4">
+                        <div className="flex flex-col items-center">
                           <button
-                            onClick={() => updateQuantity(item._id || item.id, item.quantity + 1, item.options)}
-                            className="w-8 h-8 rounded-r-md bg-white flex items-center justify-center border border-white"
+                            type="button"
+                            onClick={() => handleNavigateToProduct(item.productId)}
+                            className="w-16 h-16 flex-shrink-0 rounded-lg overflow-hidden focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#733857] cursor-pointer"
+                            aria-label="View product details"
+                          >
+                            <img 
+                              src={item.image || '/placeholder-image.jpg'} 
+                              alt={item.name || 'Product'} 
+                              className="w-full h-full object-cover"
+                            />
+                          </button>
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 mb-1">
+                            <h3 className="font-medium text-[#733857]" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+                              {item.name || 'Product'}
+                            </h3>
+                            {item.isFreeProduct && (
+                              <span className="bg-green-500 text-white text-xs font-bold px-2 py-0.5 rounded">
+                                FREE
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-sm text-gray-500">
+                            {variantLabel || variant.size || variant.weight || 'Standard'}
+                          </p>
+                          <p className="text-xs text-gray-600 mt-1">
+                            Egg (or) Eggless: <span className="font-medium text-gray-800">{eggLabel}</span>
+                          </p>
+                          {/* Tiny countdown (desktop) */}
+                          <p className="text-[10px] leading-3 text-gray-400 mt-1">
+                            Removes in: {formatHMS(timeLeftForItem(item))}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Price - spans 2 */}
+                      <div className="hidden md:flex col-span-2 items-center justify-center">
+                        <div className="text-center space-y-1">
+                          {hasDiscount && (
+                            <span className="block text-xs text-gray-400 line-through">
+                              ₹{unitMrp.toFixed(2)}
+                            </span>
+                          )}
+                          <span className="text-sm text-gray-800 font-medium">
+                            ₹{unitFinalPrice.toFixed(2)}
+                          </span>
+                          {hasDiscount && (
+                            <OfferBadge label={`${discountPercentage}% OFF`} className="mt-1 text-[10px]" />
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Quantity Controls - spans 2 */}
+                      <div className="hidden md:flex col-span-2 items-center justify-center">
+                        <div className="flex items-center border border-[#733857] rounded-lg bg-white">
+                          <button 
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleQuantityChangeWithAnimation(item.productId, -1, stock);
+                            }}
+                            className="w-8 h-8 flex items-center justify-center text-[#733857] hover:bg-[#733857]/10 transition-all duration-150 rounded-l-lg font-light select-none"
+                            disabled={item.quantity <= 1}
+                            style={{ fontFamily: 'system-ui, -apple-system, sans-serif', userSelect: 'none' }}
+                          >
+                            −
+                          </button>
+                          <motion.span
+                            key={`jelly-cart-${item.productId}-${jellyAnimations[item.productId] || 0}`}
+                            initial={{ 
+                              scaleX: 1, 
+                              scaleY: 1,
+                              y: animationDirections[item.productId] === 'up' ? -10 : animationDirections[item.productId] === 'down' ? 10 : 0,
+                              opacity: animationDirections[item.productId] ? 0.7 : 1
+                            }}
+                            animate={{
+                              scaleX: [1, 1.15, 0.95, 1.03, 1],
+                              scaleY: [1, 0.85, 1.05, 0.98, 1],
+                              y: [
+                                animationDirections[item.productId] === 'up' ? -10 : animationDirections[item.productId] === 'down' ? 10 : 0,
+                                animationDirections[item.productId] === 'up' ? -5 : animationDirections[item.productId] === 'down' ? 5 : 0,
+                                0,
+                                0,
+                                0
+                              ],
+                              opacity: [
+                                animationDirections[item.productId] !== 'none' ? 0.7 : 1,
+                                1,
+                                1,
+                                1,
+                                1
+                              ]
+                            }}
+                            transition={{
+                              duration: 0.6,
+                              times: [0, 0.2, 0.5, 0.8, 1],
+                              ease: "easeInOut"
+                            }}
+                            className="px-3 py-1 font-light text-sm min-w-[2.5rem] text-center border-l border-r border-[#733857] text-[#733857] inline-block select-none"
+                            style={{ fontFamily: 'system-ui, -apple-system, sans-serif', userSelect: 'none' }}
+                          >
+                            {item.quantity}
+                          </motion.span>
+                          <button 
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleQuantityChangeWithAnimation(item.productId, 1, stock);
+                            }}
+                            className="w-8 h-8 flex items-center justify-center text-[#733857] hover:bg-[#733857]/10 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed rounded-r-lg font-light select-none"
+                            disabled={!canIncrease}
+                            style={{ fontFamily: 'system-ui, -apple-system, sans-serif', userSelect: 'none' }}
                           >
                             +
                           </button>
                         </div>
-                        
-                        <div className="text-right">
-                          <div className="font-medium text-black">₹{Math.round(item.price * item.quantity)}</div>
-                          <div className="text-sm text-black">₹{Math.round(item.price)} each</div>
+                      </div>
+
+                      {/* Total - spans 2 */}
+                      <div className="hidden md:flex col-span-2 items-center justify-center relative">
+                        <div className="text-center space-y-1">
+                          {hasDiscount && (
+                            <span className="block text-xs text-gray-400 line-through">
+                              ₹{(unitMrp * item.quantity).toFixed(2)}
+                            </span>
+                          )}
+                          <span className="text-sm font-semibold text-[#733857]">
+                            ₹{lineTotal.toFixed(2)}
+                          </span>
                         </div>
+                        <button 
+                          onClick={() => handleRemoveItem(item)}
+                          className="text-gray-300 hover:text-red-500 transition-colors absolute top-0 right-4"
+                          aria-label="Remove item"
+                        >
+                          <FaTrash size={10} />
+                        </button>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
-            </div>
-          </div>
-          
-          {/* Order Summary */}
-          <div className="lg:col-span-4">
-            <div className="bg-white rounded-lg shadow-md p-6 sticky top-[90px] md:top-[140px]">
-              <h2 className="font-semibold text-lg text-black pb-4 border-b border-white mb-4">
-                Order Summary
-              </h2>
-              
-              {/* Coupon Code */}
-              <div className="mb-6">
-                <div className="flex items-center mb-2">
-                  <FaTag className="text-black mr-2" />
-                  <h3 className="font-medium">Have a coupon?</h3>
-                </div>
-                
-                {appliedCoupon ? (
-                  <div className="flex items-center justify-between bg-green-50 p-3 rounded-md">
-                    <div>
-                      <span className="font-medium text-green-700">{appliedCoupon}</span>
-                      <p className="text-xs text-green-600">
-                        Coupon applied successfully!
-                      </p>
-                    </div>
-                    <button 
-                      onClick={removeCoupon}
-                      className="text-sm text-red-500 hover:text-red-700"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ) : (
-                  <div>
-                    <div className="flex">
-                      <input
-                        type="text"
-                        placeholder="Enter coupon code"
-                        className="flex-grow px-3 py-2 border border-white rounded-l-md focus:outline-none focus:ring-1 focus:ring-white focus:border-white"
-                        value={couponCode}
-                        onChange={(e) => setCouponCode(e.target.value)}
-                      />
-                      <button
-                        onClick={handleApplyCoupon}
-                        className="bg-black text-white px-4 py-2 rounded-r-md transition-colors"
-                      >
-                        Apply
-                      </button>
-                    </div>
-                    {couponMessage && (
-                      <p className={`text-xs mt-1 ${couponError ? 'text-red-500' : 'text-green-500'}`}>
-                        {couponMessage}
-                      </p>
-                    )}
-                    <div className="text-xs text-black mt-2">
-                      Try: SWEET10, WELCOME20, FLAT100
-                    </div>
-                  </div>
-                )}
               </div>
               
-              {/* Price Breakdown */}
-              <div className="space-y-3 text-black">
-                <div className="flex justify-between">
-                  <span>Subtotal</span>
-                  <span className="font-medium">₹{cartTotal}</span>
-                </div>
-                
-                <div className="flex justify-between">
-                  <span>Delivery Charge</span>
-                  <span className="font-medium">
-                    {deliveryCharge === 0 ? (
-                      <span className="text-green-500">Free</span>
-                    ) : (
-                      `₹${deliveryCharge}`
-                    )}
-                  </span>
-                </div>
-                
-                <div className="flex justify-between">
-                  <span>Tax (5%)</span>
-                  <span className="font-medium">₹{taxAmount.toFixed(2)}</span>
-                </div>
-                
-                {couponDiscount > 0 && (
-                  <div className="flex justify-between text-green-600">
-                    <span>Coupon Discount</span>
-                    <span className="font-medium">-₹{couponDiscount.toFixed(2)}</span>
+              {/* Total Section */}
+              <div className="mt-8">
+                {/* Mobile Total */}
+                <div className="md:hidden px-4">
+                  <div className="flex justify-between items-center border-t border-b border-gray-300 py-4">
+                    <span className="text-lg font-medium">Total: </span>
+                    <span className="text-lg font-bold">{formatCurrency(discountedCartTotal)}</span>
                   </div>
-                )}
+                </div>
                 
-                <div className="border-t border-white pt-3 mt-3">
-                  <div className="flex justify-between font-bold text-lg">
-                    <span>Total</span>
-                    <span>₹{grandTotal.toFixed(2)}</span>
+                {/* Desktop Total */}
+                <div className="hidden md:flex justify-end pr-4">
+                  <div className="w-64 border-t border-b border-brown-300 py-4 flex justify-end">
+                    <span className="text-xl font-bold text-black pr-2" style={{fontFamily: 'Montserrat, Arial, sans-serif'}}>
+                      Total : {formatCurrency(discountedCartTotal)}
+                    </span>
                   </div>
-                  <p className="text-xs text-black mt-1">
-                    (Including all taxes)
-                  </p>
                 </div>
               </div>
               
-              {/* Checkout Buttons */}
-              <div className="mt-6">
-                <button 
+              {/* Checkout Button */}
+              <div className="px-4 md:flex md:justify-center mt-6">
+                <AnimatedButton
                   onClick={handleCheckout}
-                  className={`w-full bg-black text-white font-medium py-3 rounded-md transition-colors mb-3 ${
-                    hasValidDeliveryLocation() ? 'hover:bg-gray-800' : 'opacity-80 cursor-not-allowed'
-                  }`}
+                  disabled={!canProceedToCheckout()}
+                  className="w-full md:w-auto"
+                  style={{
+                    width: '100%',
+                    maxWidth: '320px',
+                    margin: '0 auto'
+                  }}
                 >
-                  Proceed to Checkout
-                </button>
-                
-                {!hasValidDeliveryLocation() && (
-                  <p className="text-amber-600 text-xs text-center mb-3">
-                    Select a valid delivery location to continue
-                  </p>
-                )}
+                  {canProceedToCheckout() ? "CHECKOUT" : "SELECT HOSTEL"}
+                </AnimatedButton>
               </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      
-      {/* Location Modal */}
-      {showLocationModal && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h3 className="text-lg font-semibold text-black mb-4">Select Delivery Location</h3>
-            
-            <div className="mb-4">
-              <p className="text-sm text-black mb-3">
-                We currently deliver to the following locations:
-              </p>
               
-              {locationsLoading ? (
-                <div className="py-4 text-center text-black">Loading locations...</div>
-              ) : locations.length > 0 ? (
-                <div className="max-h-60 overflow-y-auto border border-white rounded-md">
-                  {locations.map(location => (
-                    <div 
-                      key={location._id}
-                      className={`p-3 border-b border-white last:border-0 cursor-pointer ${
-                        selectedLocationId === location._id ? 'bg-pink-50' : 'hover:bg-gray-100'
-                      }`}
-                      onClick={() => setSelectedLocationId(location._id)}
-                    >
-                      <div className="flex items-start">
-                        <input 
-                          type="radio"
-                          name="location"
-                          className="mt-1 text-black focus:ring-white"
-                          checked={selectedLocationId === location._id}
-                          onChange={() => setSelectedLocationId(location._id)}
-                        />
-                        <div className="ml-3">
-                          <p className="font-medium text-black">{location.area}</p>
-                          <p className="text-sm text-black">{location.city}, {location.pincode}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="p-4 text-center bg-gray-100 rounded-md">
-                  No delivery locations available at this time.
+              {!canProceedToCheckout() && (
+                <div className="mt-3 flex justify-center">
+                  <div className="space-y-1">
+                    {(!user?.hostel || !user.hostel._id || !user.hostel.name) && (
+                      <p className="text-amber-600 text-xs text-center">
+                        Select your hostel from your profile to continue
+                      </p>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
-            
-            <div className="flex justify-end space-x-3">
-              <button
-                onClick={() => setShowLocationModal(false)}
-                className="px-4 py-2 border border-white rounded-md text-black transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleChangeLocation}
-                disabled={!selectedLocationId || !locations.length}
-                className={`px-4 py-2 bg-black text-white rounded-md transition-colors ${
-                  (!selectedLocationId || !locations.length) 
-                    ? 'opacity-50 cursor-not-allowed' 
-                    : 'hover:bg-gray-800'
-                }`}
-              >
-                Update Location
-              </button>
-            </div>
           </div>
         </div>
-      )}
       </div>
+
+      {/* Free Product Modal */}
+      <FreeProductModal 
+        isOpen={showFreeProductModal} 
+        onClose={() => setShowFreeProductModal(false)} 
+      />
+
     </ShopClosureOverlay>
   );
 };
 
 export default Cart;
-
-
-
-
-
-

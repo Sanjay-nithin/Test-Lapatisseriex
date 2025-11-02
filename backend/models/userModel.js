@@ -4,34 +4,26 @@ const userSchema = new mongoose.Schema(
   {
     uid: {
       type: String,
-      required: true,
+      required: function() {
+        // uid is not required for temporary OTP verification records
+        return !this.isTemp;
+      },
       unique: true,
-    },
-    phone: {
-      type: String,
-      required: true,
-      unique: true,
+      sparse: true, // Allow multiple null values for temp users
     },
     email: {
       type: String,
+      required: true,
+      unique: true,
       trim: true,
       lowercase: true,
-      sparse: true, 
     },
-    newEmail: {
-      type: String,
-      trim: true,
-      lowercase: true,
-      sparse: true,  
-    },
-    isEmailVerified: {
+    // Email verification flags
+    emailVerified: {
       type: Boolean,
       default: false,
     },
-    emailVerificationOTP: {
-      type: String,
-    },
-    emailVerificationOTPExpires: {
+    emailVerifiedAt: {
       type: Date,
     },
     name: {
@@ -75,14 +67,22 @@ const userSchema = new mongoose.Schema(
       enum: ['male', 'female', 'other', ''],
       default: ''
     },
+    phone: {
+      type: String,
+      trim: true,
+    },
+    // Phone verification flags
+    phoneVerified: {
+      type: Boolean,
+      default: false,
+    },
+    phoneVerifiedAt: {
+      type: Date,
+    },
     profilePhoto: {
       url: { type: String, default: '' },
       public_id: { type: String, default: '' }
     },
-    favorites: [{
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Product',
-    }],
     recentlyViewed: [{
       productId: {
         type: mongoose.Schema.Types.ObjectId,
@@ -102,30 +102,92 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
+    lastPasswordChange: {
+      type: Date,
+    },
     isActive: {
       type: Boolean,
       default: true,
     },
+    // Temporary user flag for OTP verification
+    isTemp: {
+      type: Boolean,
+      default: false,
+    },
+    // Password reset OTP fields
+    passwordResetOTP: {
+      type: String,
+    },
+    passwordResetOTPExpires: {
+      type: Date,
+    },
+    passwordResetAttempts: {
+      type: Number,
+      default: 0,
+    },
+    passwordResetBlockedUntil: {
+      type: Date,
+    },
+    // Signup OTP fields
+    signupOTP: {
+      type: String,
+    },
+    signupOTPExpires: {
+      type: Date,
+    },
+    // Monthly reward system fields
+    monthlyOrderDays: [{
+      date: {
+        type: Date,
+        required: true
+      },
+      month: {
+        type: Number, // 1-12
+        required: true
+      },
+      year: {
+        type: Number,
+        required: true
+      }
+    }],
+    freeProductEligible: {
+      type: Boolean,
+      default: false
+    },
+    selectedFreeProductId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Product',
+      default: null
+    },
+    lastRewardMonth: {
+      type: String, // Format: "YYYY-MM"
+      default: null
+    },
+    freeProductUsed: {
+      type: Boolean,
+      default: false
+    }
   },
   {
     timestamps: true,
   }
 );
 
+// Remove any duplicate indexes that might be causing warnings
+// Only use field-level index definitions (unique: true) instead of schema.index()
+
 // Method to check if user is admin
 userSchema.methods.isAdmin = function() {
   return this.role === 'admin';
 };
 
-// Add pre-save middleware to assign admin role for specific phone numbers
+// Add pre-save middleware to assign admin role for specific emails
 userSchema.pre('save', function(next) {
-  // If this is a new user or role is being modified
-  if (this.isNew || this.isModified('phone')) {
-    // Check for admin phone number
-    if (this.phone === '+919500643892') {
+  // If this is a new user or email is being modified
+  if (this.isNew || this.isModified('email')) {
+    // Check for admin email (update this to your actual admin email)
+    if (this.email === 'admin@lapatisserie.com') {
       this.role = 'admin';
-    } else if (this.phone === '+919361620860') {
-      this.role = 'user';
     }
   }
   next();

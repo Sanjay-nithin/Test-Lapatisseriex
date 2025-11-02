@@ -3,6 +3,24 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Prevent system dark mode from interfering with website design */
+:root {
+  color-scheme: light;
+}
+
+/* Only prevent dark mode interference, keep original design */
+@media (prefers-color-scheme: dark) {
+  /* Disable dark mode auto-styling but preserve original colors */
+  * {
+    color-scheme: light !important;
+  }
+  
+  /* Prevent browser from inverting colors or applying dark styles */
+  img, video, iframe, canvas, svg {
+    filter: none !important;
+  }
+}
+
 /* Remove focus outline for all interactive elements */
 button:focus,
 a:focus,
@@ -50,28 +68,82 @@ main {
 
 /* Animation for fade-in */
 @keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-.animate-fade-in {
-  animation: fadeIn 0.3s ease-in-out;
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 body {
-  font-family: sans-serif;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   background-color: white;
-  padding-top: env(safe-area-inset-top, 0);
+  padding-top: 0 !important;
+  margin: 0 !important;
 }
 
-/* When product image modal is open on large devices, hide header and floating cart */
+html {
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+/* Admin pages: remove any body top padding (including safe-area) so the mobile header is flush */
+body.admin-layout {
+  padding-top: 0 !important;
+}
+
+:root {
+  --admin-mobile-header-height: 56px; /* default header height; keep in sync with the header bar height */
+  --admin-mobile-header-inner-padding: 2px; /* small breathing room inside header; set 0px for perfectly flush */
+  --admin-mobile-content-gap: 0px;    /* space between header and content; set 2-6px if you want a subtle gap */
+  --admin-mobile-bottom-gap: 72px;    /* extra space at the bottom so last items and FAB/pagination aren't clipped on mobile */
+  --admin-mobile-header-offset: calc(
+    var(--admin-mobile-header-height) + var(--admin-mobile-content-gap)
+  );
+}
+
+/* Global scrollbar styles - default black thumb */
+/* Firefox */
+* {
+  scrollbar-color: #000 #e5e7eb; /* thumb, track */
+  scrollbar-width: thin;
+}
+/* WebKit (Chrome/Edge/Safari) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #e5e7eb; /* gray-200 */
+}
+::-webkit-scrollbar-thumb {
+  background: #000; /* black */
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #111;
+}
+
+/* Tables get their own distinct scrollbar */
+.table-scroll {
+  /* Firefox */
+  scrollbar-color: #6b7280 #f3f4f6; /* gray-500 thumb on gray-100 track */
+  scrollbar-width: thin;
+}
+.table-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.table-scroll::-webkit-scrollbar-track {
+  background: #f3f4f6; /* gray-100 */
+}
+.table-scroll::-webkit-scrollbar-thumb {
+  background: #6b7280; /* gray-500 */
+  border-radius: 6px;
+}
+.table-scroll::-webkit-scrollbar-thumb:hover {
+  background: #4b5563; /* gray-600 */
+}
+
+/* When product image modal is open on large devices, hide header */
 @media (min-width: 768px) {
-  body.image-modal-open header,
-  body.image-modal-open .floating-cart-bar {
+  body.image-modal-open header {
     display: none !important;
   }
 }
@@ -101,9 +173,29 @@ body {
   }
 }
 
+/* Admin pages: let Admin layout control its own spacing on mobile */
+@media (max-width: 767px) {
+  body.admin-layout main {
+    padding-top: 0 !important;
+  }
+}
+
 /* Class for body when header is fixed */
 body.has-fixed-header {
   padding-top: 0; /* Managed by main tag */
+}
+
+/* Admin: remove any residual top spacing on desktop */
+body.admin-layout main {
+  padding-top: 0 !important;
+}
+.admin-content-root {
+  padding: 0 !important;
+  margin: 0 !important;
+}
+.admin-content-root > *:first-child {
+  margin-top: 0 !important;
+  padding-top: 0 !important;
 }
 
 /* Category swiper styling */
@@ -117,26 +209,60 @@ body.has-fixed-header {
   align-items: center;
 }
 
-/* Custom component classes */
-.btn-pink {
+/* Cake-themed component classes */
+.btn-cake-primary {
+  background: linear-gradient(135deg, #fb7185, #ec4899);
   color: white;
-  padding: 0.5rem 1.5rem;
-  border-radius: 0.375rem;
-  font-weight: 500;
-  transition: background-color 0.3s;
+  padding: 0.75rem 2rem;
+  border-radius: 0.75rem;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 14px 0 rgba(251, 113, 133, 0.3);
 }
-.btn-pink:hover {
+.btn-cake-primary:hover {
+  background: linear-gradient(135deg, #f43f5e, #db2777);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px 0 rgba(251, 113, 133, 0.4);
 }
 
-.btn-outline-pink {
-  border: 2px solid;
-  padding: 0.5rem 1.5rem;
-  border-radius: 0.375rem;
-  font-weight: 500;
-  transition: all 0.3s;
-}
-.btn-outline-pink:hover {
+.btn-cake-secondary {
+  background: linear-gradient(135deg, #e0a47d, #c17e5b);
   color: white;
+  padding: 0.75rem 2rem;
+  border-radius: 0.75rem;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 14px 0 rgba(224, 164, 125, 0.3);
+}
+.btn-cake-secondary:hover {
+  background: linear-gradient(135deg, #c17e5b, #a16847);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px 0 rgba(224, 164, 125, 0.4);
+}
+
+.btn-outline-cake {
+  border: 2px solid #fb7185;
+  color: #fb7185;
+  background: transparent;
+  padding: 0.75rem 2rem;
+  border-radius: 0.75rem;
+  font-weight: 600;
+  transition: all 0.3s ease;
+}
+.btn-outline-cake:hover {
+  background: linear-gradient(135deg, #fb7185, #ec4899);
+  color: white;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px 0 rgba(251, 113, 133, 0.3);
+}
+
+/* Cake-themed gradient text utilities */
+.text-cake-gradient {
+  background: linear-gradient(135deg, #e0a47d 0%, #c17e5b 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: 0px 0px 1px rgba(224, 164, 125, 0.2);
 }
 
 .section-title {
@@ -211,4 +337,116 @@ body.has-fixed-header {
   -webkit-overflow-scrolling: touch;
 }
 
+/* Profile loading animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes growWidth {
+  from {
+    width: 0%;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+@keyframes pulse-subtle {
+  0%, 100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.5s ease-out;
+}
+
+.animate-growWidth {
+  animation: growWidth 2s ease-in-out infinite;
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s ease-in-out infinite;
+}
+
+/* Sticky button improvements */
+.sticky-save-button {
+  backdrop-filter: blur(10px);
+  background: rgba(255, 255, 255, 0.95);
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+/* Mobile bottom navigation spacing for profile */
+@media (max-width: 768px) {
+  .profile-save-buttons {
+    bottom: 4rem !important; /* 64px for bottom navigation height */
+    z-index: 60 !important;
+  }
+  
+  .profile-form-mobile {
+    padding-bottom: 8rem !important; /* Extra space for sticky buttons */
+  }
+}
+
+/* Loading state transitions */
+.loading-transition {
+  transition: all 0.3s ease-in-out;
+}
+
+/* Profile form animations */
+.profile-form-field {
+  transition: all 0.2s ease-in-out;
+}
+
+.profile-form-field:focus-within {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Scrollbar hiding for swipe layouts */
+.scrollbar-hide {
+  -ms-overflow-style: none;  /* Internet Explorer 10+ */
+  scrollbar-width: none;  /* Firefox */
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;  /* Safari and Chrome */
+}
+
+/* Smooth scrolling for horizontal containers */
+.scroll-smooth {
+  scroll-behavior: smooth;
+}
+
+/* Payment page: Ensure no top spacing - using data attribute for specificity */
+main[data-no-padding="true"] {
+  padding-top: 0 !important;
+  margin-top: 0 !important;
+  position: relative;
+}
+
+main[data-no-padding="true"] > * {
+  margin-top: 0 !important;
+}
+
+@media (max-width: 767px) {
+  main[data-no-padding="true"] {
+    padding-top: 0 !important;
+    margin-top: 0 !important;
+  }
+  
+  main[data-no-padding="true"] > * {
+    margin-top: 0 !important;
+  }
+}
 

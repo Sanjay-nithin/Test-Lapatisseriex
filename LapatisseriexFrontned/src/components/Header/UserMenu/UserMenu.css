@@ -10,36 +10,64 @@
   }
 }
 
-/* Ensure smooth transitions on hover states */
+/* Profile Incomplete Tooltip Animation */
+@keyframes tooltipFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-5px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Profile Badge Pulse Animation */
+@keyframes profileBadgePulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 3px 12px rgba(115, 56, 87, 0.5), 0 0 0 2px rgba(255, 255, 255, 0.9);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 4px 16px rgba(115, 56, 87, 0.7), 0 0 0 3px rgba(255, 255, 255, 1);
+  }
+}
+
+/* Ensure smooth transitions on hover states - matching header nav-item */
 .user-menu-item {
-  transition: all 0.2s ease;
   position: relative;
-  overflow: hidden;
+  padding: 8px 12px;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 .user-menu-item:hover {
-  background-color: #f7f8f9;
-  transform: translateX(2px);
+  transform: translateY(-1px);
+}
+
+.user-menu-item:active {
+  transform: translateY(0);
 }
 
 /* Add a subtle highlight to active menu items */
 .user-menu-active {
-  background-color: rgba(0, 0, 0, 0.05);
+  background-color: rgba(40, 28, 32, 0.05);
 }
 
-/* Add subtle hover effect */
-.user-menu-item:after {
-  content: '';
+/* Premium Underline Animation - matching header nav items */
+.user-menu-item .underline-animation {
   position: absolute;
-  left: 0;
   bottom: 0;
-  height: 2px;
+  left: 50%;
   width: 0;
-  background-color: #000;
-  transition: width 0.3s ease;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #733857, transparent);
+  transform: translateX(-50%);
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.user-menu-item:hover:after {
+.user-menu-item:hover .underline-animation {
   width: 100%;
-  opacity: 0.1;
 }

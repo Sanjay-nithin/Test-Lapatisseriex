@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { FaUsers, FaShoppingCart, FaMapMarkerAlt, FaList, FaCheckCircle } from 'react-icons/fa';
+import { Link } from 'react-router-dom';
 import axios from 'axios';
-import { useAuth } from '../../context/AuthContext/AuthContext';
+import { useAuth } from '../../hooks/useAuth';
+import InventoryWidget from './Dashboard/InventoryWidget';
+
 import { useLocation as useLocationContext } from '../../context/LocationContext/LocationContext';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
 
@@ -18,6 +21,7 @@ const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [recentUsers, setRecentUsers] = useState([]);
+  const [recentOrders, setRecentOrders] = useState([]);
   const [authReady, setAuthReady] = useState(false);
 
   const API_URL = import.meta.env.VITE_API_URL;
@@ -55,10 +59,19 @@ const AdminDashboard = () => {
         const headers = { Authorization: `Bearer ${idToken}` };
 
         // Fetch users from the admin endpoint
-        const usersResponse = await axios.get(`${API_URL}/admin/users`, { headers });
-        const usersData = usersResponse.data || [];
+  const usersResponse = await axios.get(`${API_URL}/admin/users`, { headers });
+  const raw = usersResponse.data;
+  const usersData = Array.isArray(raw) ? raw : (raw?.users || []);
 
         console.log("User data fetched:", usersData);
+
+        // Fetch order statistics
+        const ordersResponse = await axios.get(`${API_URL}/payments/orders?limit=1000`, { headers });
+        const ordersData = ordersResponse.data.orders || [];
+        const totalOrders = ordersData.length;
+        const pendingOrders = ordersData.filter(order => 
+          ['placed', 'confirmed', 'preparing', 'ready', 'out_for_delivery'].includes(order.orderStatus)
+        ).length;
 
         // Set recent users (last 5)
         // Make sure we're sorting correctly based on the actual data structure
@@ -70,11 +83,17 @@ const AdminDashboard = () => {
 
         setRecentUsers(sortedUsers);
 
+        // Set recent orders (last 5)
+        const sortedOrders = ordersData
+          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+          .slice(0, 5);
+        setRecentOrders(sortedOrders);
+
         // Update the stats with real data
         setStats({
-          totalUsers: Array.isArray(usersData) ? usersData.length : 0,
-          totalOrders: 0, // We're setting this to 0 as requested
-          pendingOrders: 0, // We're setting this to 0 as requested
+          totalUsers: Array.isArray(raw) ? usersData.length : (raw?.totalUsers ?? usersData.length ?? 0),
+          totalOrders: totalOrders,
+          pendingOrders: pendingOrders,
           totalProducts: 0, // We're setting this to 0 as requested
           activeLocations: locations ? locations.filter(loc => loc.isActive).length : 0
         });
@@ -96,7 +115,7 @@ const AdminDashboard = () => {
   }, [authReady, user, locations]);
 
   return (
-    <div className="container mx-auto pl-8 pr-4 py-6 md:px-6 md:py-8 font-sans">
+    <div className="container mx-auto pl-8 pr-4 py-8 md:px-6 md:py-8 font-sans">
       {/* Tweak left padding: change pl-8 to desired value (e.g., pl-6 for less, pl-10 for more) */}
       {/* Tweak top/bottom padding: change py-6 to desired value (e.g., py-4 for less, py-8 for more) */}
       <div className="mb-2 md:mb-8">
@@ -127,7 +146,7 @@ const AdminDashboard = () => {
               </div>
             </div>
             <div className="mt-4">
-              <a href="/admin/users" className="text-blue-500 text-sm hover:underline font-medium">View all users</a>
+              <Link to="/admin/users" className="text-blue-500 text-sm hover:underline font-medium">View all users</Link>
             </div>
           </div>
           
@@ -142,7 +161,7 @@ const AdminDashboard = () => {
               </div>
             </div>
             <div className="mt-4 flex justify-between items-center">
-              <a href="/admin/orders" className="text-green-500 text-sm hover:underline font-medium">View all orders</a>
+              <Link to="/admin/orders" className="text-green-500 text-sm hover:underline font-medium">View all orders</Link>
               <div className="text-amber-500 text-sm font-bold bg-amber-50 px-2 py-1 rounded">
                 {stats.pendingOrders} pending
               </div>
@@ -182,20 +201,57 @@ const AdminDashboard = () => {
       )}
 
       {/* Recent Activity Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Inventory Widget */}
+        <InventoryWidget />
         <div className="bg-white rounded-lg shadow-md p-6">
           <h2 className="text-lg font-bold text-black mb-4">Recent Orders</h2>
-          <div className="text-center py-8">
-            <div className="text-white mb-4">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
-              </svg>
+          {recentOrders.length === 0 ? (
+            <div className="text-center py-8">
+              <div className="text-gray-400 mb-4">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                </svg>
+              </div>
+              <p className="text-black font-medium">No orders available yet</p>
+              <p className="text-sm text-gray-600 mt-2">New orders will appear here</p>
             </div>
-            <p className="text-black font-medium">No orders available yet</p>
-            <p className="text-sm text-black mt-2 font-light">Order management coming soon</p>
-          </div>
+          ) : (
+            <div className="space-y-4">
+              {recentOrders.map((order, i) => (
+                <div key={order._id || i} className="border-b border-gray-200 pb-3 last:border-0 last:pb-0">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="font-medium text-black">{order.orderNumber}</p>
+                      <p className="text-sm text-gray-600">{order.userDetails?.name || 'Customer'}</p>
+                      <p className="text-xs text-gray-500">
+                        {new Date(order.createdAt).toLocaleDateString('en-IN', {
+                          year: 'numeric',
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-medium text-black">₹{order.amount?.toFixed(2)}</p>
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        order.orderStatus === 'delivered' ? 'bg-green-100 text-green-800' :
+                        order.orderStatus === 'cancelled' ? 'bg-red-100 text-red-800' :
+                        ['placed', 'confirmed', 'preparing', 'ready', 'out_for_delivery'].includes(order.orderStatus) 
+                          ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-800'
+                      }`}>
+                        {order.orderStatus?.replace('_', ' ')}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="mt-4">
-            <a href="/admin/orders" className="text-black text-sm hover:underline font-medium">View orders page</a>
+            <Link to="/admin/orders" className="text-blue-600 text-sm hover:underline font-medium">View all orders</Link>
           </div>
         </div>
         
@@ -238,7 +294,7 @@ const AdminDashboard = () => {
             </div>
           )}
           <div className="mt-4">
-            <a href="/admin/users" className="color blue text-sm hover:underline font-medium">View all users</a>
+            <Link to="/admin/users" className="color blue text-sm hover:underline font-medium">View all users</Link>
           </div>
         </div>
       </div>

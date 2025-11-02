@@ -2,10 +2,14 @@ import React, { useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import Header from '../Header/Header';
 import Footer from '../Footer/Footer';
-import FloatingCartBar from '../Cart/FloatingCartBar';
 import BottomNavigation from '../common/BottomNavigation';
+import NGOSidePanel from '../Payment/NGOSidePanel';
+import { useNGOPanel } from '../../hooks/useNGOPanel';
+import OfflineAwareOutlet from '../common/OfflineAwareOutlet';
 
 const Layout = () => {
+  const { showNGOPanel, closePanel } = useNGOPanel();
+
   // Apply header spacing class
   useEffect(() => {
     // Apply a class to handle header spacing
@@ -20,12 +24,14 @@ const Layout = () => {
   return (
     <>
       <Header />
-      <main className="min-h-screen bg-white pt-[75px] md:pt-[130px] pb-20 md:pb-4 transition-all duration-300">
-        <Outlet />
+      <main className="min-h-screen bg-white pt-[75px] md:pt-[80px] pb-16 md:pb-0 transition-all duration-300">
+        <OfflineAwareOutlet />
       </main>
       <Footer />
-      <FloatingCartBar />
       <BottomNavigation />
+      
+      {/* NGO Side Panel - Available on all pages using Layout */}
+      <NGOSidePanel isOpen={showNGOPanel} onClose={closePanel} />
     </>
   );
 };

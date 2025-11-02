@@ -1,6 +1,7 @@
 import asyncHandler from 'express-async-handler';
 import User from '../models/userModel.js';
 import Product from '../models/productModel.js';
+import Order from '../models/orderModel.js';
 import firebaseAdmin from '../config/firebase.js';
 import { deleteFromCloudinary } from '../utils/cloudinary.js';
 
@@ -8,17 +9,10 @@ import { deleteFromCloudinary } from '../utils/cloudinary.js';
 // @route   GET /api/users/me
 // @access  Private
 export const getCurrentUser = asyncHandler(async (req, res) => {
-  // Fetch user with populated location, hostel, and favorites
+  // Fetch user with populated location and hostel
   const user = await User.findOne({ uid: req.user.uid })
     .populate('location')
-    .populate('hostel')
-    .populate({
-      path: 'favorites',
-      populate: {
-        path: 'category',
-        select: 'name'
-      }
-    });
+    .populate('hostel');
 
   if (!user) {
     res.status(404);
@@ -29,6 +23,29 @@ export const getCurrentUser = asyncHandler(async (req, res) => {
   // This helps avoid any cached data issues
   await user.save();
 
+  // Gather order stats to inform frontend offers and messaging
+  let totalCompletedOrders = 0;
+  let lastOrderAt = null;
+  try {
+    totalCompletedOrders = await Order.countDocuments({
+      userId: user._id,
+      orderStatus: { $ne: 'cancelled' }
+    });
+
+    if (totalCompletedOrders > 0) {
+      const latestOrder = await Order.findOne({ userId: user._id })
+        .sort({ createdAt: -1 })
+        .select('createdAt');
+      if (latestOrder) {
+        lastOrderAt = latestOrder.createdAt;
+      }
+    }
+  } catch (orderStatsError) {
+    console.error('Error computing order stats for user profile response:', orderStatsError);
+  }
+
+  const hasPlacedOrder = totalCompletedOrders > 0;
+
   // Format dates for the response
   const formattedDob = user.dob ? user.dob.toISOString().split('T')[0] : null;
   const formattedAnniversary = user.anniversary ? user.anniversary.toISOString().split('T')[0] : null;
@@ -37,7 +54,6 @@ export const getCurrentUser = asyncHandler(async (req, res) => {
     success: true,
     user: {
       uid: user.uid,
-      phone: user.phone,
       name: user.name,
       role: user.role,
       dob: formattedDob,
@@ -49,11 +65,18 @@ export const getCurrentUser = asyncHandler(async (req, res) => {
       location: user.location,
       hostel: user.hostel,
       profilePhoto: user.profilePhoto || { url: '', public_id: '' },
-      favorites: user.favorites || [],
       createdAt: user.createdAt,
       email: user.email || '',
       emailVerified: user.emailVerified || false,
-      emailVerifiedAt: user.emailVerifiedAt || null
+      emailVerifiedAt: user.emailVerifiedAt || null,
+      phone: user.phone || '',
+      phoneVerified: user.phoneVerified || false,
+      phoneVerifiedAt: user.phoneVerifiedAt || null,
+      hasPlacedOrder,
+      ordersSummary: {
+        totalOrders: totalCompletedOrders,
+        lastOrderAt
+      }
     }
   });
 });
@@ -90,7 +113,10 @@ export const updateUser = asyncHandler(async (req, res) => {
     location, 
     hostel, 
     role,
-    email
+    email,
+    phone,
+    phoneVerified,
+    phoneVerifiedAt
   } = req.body;
   
   if (name) user.name = name;
@@ -127,6 +153,19 @@ export const updateUser = asyncHandler(async (req, res) => {
     user.email = email;
   }
   
+  // Handle phone updates
+  if (phone !== undefined) {
+    user.phone = phone;
+  }
+  
+  // Handle phone verification updates
+  if (phoneVerified !== undefined) {
+    user.phoneVerified = phoneVerified;
+  }
+  if (phoneVerifiedAt !== undefined) {
+    user.phoneVerifiedAt = phoneVerifiedAt ? new Date(phoneVerifiedAt) : null;
+  }
+  
   // Email verification status removed
   
   // Save updated user
@@ -148,7 +187,6 @@ export const updateUser = asyncHandler(async (req, res) => {
     isAdminUpdate,
     user: {
       uid: updatedUser.uid,
-      phone: updatedUser.phone,
       name: updatedUser.name,
       role: updatedUser.role,
       dob: formattedDob,
@@ -162,7 +200,10 @@ export const updateUser = asyncHandler(async (req, res) => {
       profilePhoto: updatedUser.profilePhoto || { url: '', public_id: '' },
       email: updatedUser.email || '',
       emailVerified: updatedUser.emailVerified || false,
-      emailVerifiedAt: updatedUser.emailVerifiedAt || null
+      emailVerifiedAt: updatedUser.emailVerifiedAt || null,
+      phone: updatedUser.phone || '',
+      phoneVerified: updatedUser.phoneVerified || false,
+      phoneVerifiedAt: updatedUser.phoneVerifiedAt || null
     }
   });
 });
@@ -197,97 +238,35 @@ export const getUserById = asyncHandler(async (req, res) => {
   });
 });
 export const getUsers = asyncHandler(async (req, res) => {
-  const users = await User.find({}).populate('location').populate('hostel').sort('-createdAt');
+  const { page = 1, limit = 10, search = '' } = req.query;
+
+  const filter = {};
+  if (search) {
+    const regex = new RegExp(search, 'i');
+    filter.$or = [
+      { name: regex },
+      { email: regex },
+    ];
+  }
+
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 10));
+  const skip = (pageNum - 1) * limitNum;
+
+  const [users, totalUsers] = await Promise.all([
+    User.find(filter).populate('location').populate('hostel').sort('-createdAt').skip(skip).limit(limitNum),
+    User.countDocuments(filter)
+  ]);
   
-  res.status(200).json(users);
-});
-
-// @desc    Add product to favorites
-// @route   POST /api/users/favorites/:productId
-// @access  Private
-export const addToFavorites = asyncHandler(async (req, res) => {
-  const { productId } = req.params;
-  const userId = req.user.uid;
-
-  // Check if product exists
-  const product = await Product.findById(productId);
-  if (!product) {
-    res.status(404);
-    throw new Error('Product not found');
-  }
-
-  // Find user and update favorites
-  const user = await User.findOne({ uid: userId });
-  if (!user) {
-    res.status(404);
-    throw new Error('User not found');
-  }
-
-  // Check if product is already in favorites
-  if (user.favorites.includes(productId)) {
-    res.status(400);
-    throw new Error('Product already in favorites');
-  }
-
-  // Add to favorites
-  user.favorites.push(productId);
-  await user.save();
-
   res.status(200).json({
-    success: true,
-    message: 'Product added to favorites'
+    users,
+    page: pageNum,
+    pages: Math.ceil(totalUsers / limitNum) || 1,
+    totalUsers,
   });
 });
 
-// @desc    Remove product from favorites
-// @route   DELETE /api/users/favorites/:productId
-// @access  Private
-export const removeFromFavorites = asyncHandler(async (req, res) => {
-  const { productId } = req.params;
-  const userId = req.user.uid;
-
-  // Find user and update favorites
-  const user = await User.findOne({ uid: userId });
-  if (!user) {
-    res.status(404);
-    throw new Error('User not found');
-  }
-
-  // Remove from favorites
-  user.favorites = user.favorites.filter(fav => fav.toString() !== productId);
-  await user.save();
-
-  res.status(200).json({
-    success: true,
-    message: 'Product removed from favorites'
-  });
-});
-
-// @desc    Get user's favorite products
-// @route   GET /api/users/favorites
-// @access  Private
-export const getFavorites = asyncHandler(async (req, res) => {
-  const userId = req.user.uid;
-
-  // Find user with populated favorites
-  const user = await User.findOne({ uid: userId }).populate({
-    path: 'favorites',
-    populate: {
-      path: 'category',
-      select: 'name'
-    }
-  });
-
-  if (!user) {
-    res.status(404);
-    throw new Error('User not found');
-  }
-
-  res.status(200).json({
-    success: true,
-    favorites: user.favorites || []
-  });
-});
+// Favorites functionality has been removed
 
 // @desc    Add product to recently viewed
 // @route   POST /api/users/recently-viewed/:productId
@@ -340,9 +319,31 @@ export const addRecentlyViewed = asyncHandler(async (req, res) => {
 // @access  Private
 export const getRecentlyViewed = asyncHandler(async (req, res) => {
   const userId = req.user.uid;
+  
+  // Support conditional GET with ETag
+  const ifNoneMatch = req.headers['if-none-match'];
+  
+  // First find user without population to check if data has changed
+  const user = await User.findOne({ uid: userId }, 'recentlyViewed');
 
-  // Find user with populated recently viewed products
-  const user = await User.findOne({ uid: userId }).populate({
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  
+  // Generate simple ETag from recently viewed count and timestamps
+  const recentCount = user.recentlyViewed.length;
+  const latestTimestamp = recentCount > 0 ? 
+    user.recentlyViewed[0].viewedAt.getTime() : 0;
+  const etag = `W/"recent-${recentCount}-${latestTimestamp}"`;
+  
+  // If ETag matches, return 304 Not Modified
+  if (ifNoneMatch && ifNoneMatch === etag) {
+    return res.status(304).end();
+  }
+  
+  // Only populate if we need to return the full data
+  const populatedUser = await User.findOne({ uid: userId }).populate({
     path: 'recentlyViewed.productId',
     populate: {
       path: 'category',
@@ -350,19 +351,18 @@ export const getRecentlyViewed = asyncHandler(async (req, res) => {
     }
   });
 
-  if (!user) {
-    res.status(404);
-    throw new Error('User not found');
-  }
-
   // Filter out any null products (in case products were deleted)
-  let validRecentlyViewed = user.recentlyViewed.filter(item => item.productId);
+  let validRecentlyViewed = populatedUser.recentlyViewed.filter(item => item.productId);
 
   // Ensure we only return the latest 3 items
   if (validRecentlyViewed.length > 3) {
     validRecentlyViewed = validRecentlyViewed.slice(0, 3);
   }
 
+  // Set ETag header for client caching
+  res.set('ETag', etag);
+  res.set('Cache-Control', 'private, max-age=300'); // 5 minute client cache
+  
   res.status(200).json({
     success: true,
     recentlyViewed: validRecentlyViewed || []

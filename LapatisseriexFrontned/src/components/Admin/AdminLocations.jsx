@@ -16,11 +16,15 @@ const AdminLocations = () => {
   const [editingHostel, setEditingHostel] = useState(null);
   const [selectedLocationForHostels, setSelectedLocationForHostels] = useState(null);
   const [expandedLocation, setExpandedLocation] = useState(null);
+  // Auth state
+  const [authUser, setAuthUser] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
   
   const [formData, setFormData] = useState({
     city: '',
     area: '',
     pincode: '',
+    deliveryCharge: 49,
     isActive: true
   });
   
@@ -33,6 +37,25 @@ const AdminLocations = () => {
   
   const API_URL = import.meta.env.VITE_API_URL;
   
+  // Initialize Firebase auth listener to know when a user is available
+  useEffect(() => {
+    let unsubscribe;
+    (async () => {
+      try {
+        const { getAuth, onAuthStateChanged } = await import('firebase/auth');
+        const auth = getAuth();
+        unsubscribe = onAuthStateChanged(auth, (user) => {
+          setAuthUser(user);
+          setAuthReady(true);
+        });
+      } catch (e) {
+        console.error('Failed to initialize auth listener:', e);
+        setAuthReady(true);
+      }
+    })();
+    return () => { if (unsubscribe) unsubscribe(); };
+  }, []);
+  
   // Fetch all locations (including inactive ones)
   const fetchLocations = async () => {
     try {
@@ -41,7 +64,14 @@ const AdminLocations = () => {
       // Get ID token from auth
       const { getAuth } = await import('firebase/auth');
       const auth = getAuth();
-      const idToken = await auth.currentUser.getIdToken(true);
+      const user = auth.currentUser;
+      if (!user) {
+        // Not authenticated; avoid throwing and stop loading
+        setError('Please log in to access locations');
+        setLoading(false);
+        return;
+      }
+      const idToken = await user.getIdToken(true);
       
       const response = await axios.get(`${API_URL}/admin/locations`, {
         headers: { Authorization: `Bearer ${idToken}` }
@@ -62,7 +92,9 @@ const AdminLocations = () => {
     try {
       const { getAuth } = await import('firebase/auth');
       const auth = getAuth();
-      const idToken = await auth.currentUser.getIdToken(true);
+      const user = auth.currentUser;
+      if (!user) return;
+      const idToken = await user.getIdToken(true);
       
       const response = await axios.get(`${API_URL}/hostels`, {
         headers: { Authorization: `Bearer ${idToken}` }
@@ -79,7 +111,9 @@ const AdminLocations = () => {
     try {
       const { getAuth } = await import('firebase/auth');
       const auth = getAuth();
-      const idToken = await auth.currentUser.getIdToken(true);
+      const user = auth.currentUser;
+      if (!user) return [];
+      const idToken = await user.getIdToken(true);
       
       const response = await axios.get(`${API_URL}/hostels/location/${locationId}/admin`, {
         headers: { Authorization: `Bearer ${idToken}` }
@@ -98,7 +132,12 @@ const AdminLocations = () => {
       // Get ID token from auth
       const { getAuth } = await import('firebase/auth');
       const auth = getAuth();
-      const idToken = await auth.currentUser.getIdToken(true);
+      const user = auth.currentUser;
+      if (!user) {
+        setError('Please log in to create locations');
+        return;
+      }
+      const idToken = await user.getIdToken(true);
       
       await axios.post(
         `${API_URL}/admin/locations`,
@@ -122,7 +161,12 @@ const AdminLocations = () => {
       // Get ID token from auth
       const { getAuth } = await import('firebase/auth');
       const auth = getAuth();
-      const idToken = await auth.currentUser.getIdToken(true);
+      const user = auth.currentUser;
+      if (!user) {
+        setError('Please log in to update locations');
+        return;
+      }
+      const idToken = await user.getIdToken(true);
       
       await axios.put(
         `${API_URL}/admin/locations/${editingLocation._id}`,
@@ -146,7 +190,12 @@ const AdminLocations = () => {
       // Get ID token from auth
       const { getAuth } = await import('firebase/auth');
       const auth = getAuth();
-      const idToken = await auth.currentUser.getIdToken(true);
+      const user = auth.currentUser;
+      if (!user) {
+        setError('Please log in to change location status');
+        return;
+      }
+      const idToken = await user.getIdToken(true);
       
       await axios.patch(
         `${API_URL}/admin/locations/${locationId}/toggle`,
@@ -167,7 +216,12 @@ const AdminLocations = () => {
     try {
       const { getAuth } = await import('firebase/auth');
       const auth = getAuth();
-      const idToken = await auth.currentUser.getIdToken(true);
+      const user = auth.currentUser;
+      if (!user) {
+        setError('Please log in to create hostels');
+        return;
+      }
+      const idToken = await user.getIdToken(true);
       
       await axios.post(
         `${API_URL}/hostels`,
@@ -188,7 +242,12 @@ const AdminLocations = () => {
     try {
       const { getAuth } = await import('firebase/auth');
       const auth = getAuth();
-      const idToken = await auth.currentUser.getIdToken(true);
+      const user = auth.currentUser;
+      if (!user) {
+        setError('Please log in to update hostels');
+        return;
+      }
+      const idToken = await user.getIdToken(true);
       
       await axios.put(
         `${API_URL}/hostels/${editingHostel._id}`,
@@ -214,7 +273,12 @@ const AdminLocations = () => {
     try {
       const { getAuth } = await import('firebase/auth');
       const auth = getAuth();
-      const idToken = await auth.currentUser.getIdToken(true);
+      const user = auth.currentUser;
+      if (!user) {
+        setError('Please log in to delete hostels');
+        return;
+      }
+      const idToken = await user.getIdToken(true);
       
       await axios.delete(`${API_URL}/hostels/${hostelId}`, {
         headers: { Authorization: `Bearer ${idToken}` }
@@ -231,7 +295,12 @@ const AdminLocations = () => {
     try {
       const { getAuth } = await import('firebase/auth');
       const auth = getAuth();
-      const idToken = await auth.currentUser.getIdToken(true);
+      const user = auth.currentUser;
+      if (!user) {
+        setError('Please log in to change hostel status');
+        return;
+      }
+      const idToken = await user.getIdToken(true);
       
       await axios.patch(
         `${API_URL}/hostels/${hostelId}/toggle`,
@@ -270,6 +339,7 @@ const AdminLocations = () => {
       city: '',
       area: '',
       pincode: '',
+      deliveryCharge: 49,
       isActive: true
     });
   };
@@ -291,6 +361,7 @@ const AdminLocations = () => {
       city: location.city,
       area: location.area,
       pincode: location.pincode,
+      deliveryCharge: location.deliveryCharge || 49, // Default to 49 if undefined
       isActive: location.isActive
     });
   };
@@ -360,23 +431,30 @@ const AdminLocations = () => {
     );
   };
   
-  // Load locations and hostels on component mount
+  // Load locations and hostels after auth initializes and user is available
   useEffect(() => {
+    if (!authReady) return;
+    if (!authUser) {
+      setLoading(false);
+      setError('Please log in to access locations');
+      return;
+    }
     fetchLocations();
     fetchHostels();
-  }, []);
+  }, [authReady, authUser]);
 
   return (
-    <div className="container mx-auto pl-8 pr-4 py-6 pt-8 font-sans">
+    <div className="container mx-auto pl-8 pr-4 py-6 pt-8 md:pb-6 pb-28 font-sans overflow-x-hidden relative">
       {/* Tweak left padding: change pl-8 to desired value (e.g., pl-6 for less, pl-10 for more) */}
       {/* Tweak top/bottom padding: change py-6 to desired value (e.g., py-4 for less, py-8 for more) */}
-      <div className="mb-0 md:mb-6 flex justify-between items-center">
+  <div className="mb-0 md:mb-6 flex justify-between items-center">
         {/* Tweak header margin: change mb-0 md:mb-6 to desired values (e.g., mb-2 md:mb-4 for less spacing) */}
         <div>
           <h1 className="text-2xl font-semibold text-black font-bold">Delivery Locations & Hostels</h1>
           <p className="text-black font-light">Manage delivery locations and hostels for your store</p>
         </div>
-        <div className="flex space-x-3">
+        {/* Desktop header actions (visible on md+) */}
+        <div className="hidden md:flex space-x-3">
           <button
             onClick={() => openHostelModal()}
             className="bg-blue-600 text-white px-4 py-2 rounded-md flex items-center hover:bg-blue-700 transition-colors font-medium"
@@ -403,8 +481,135 @@ const AdminLocations = () => {
         </div>
       )}
       
-      {/* Locations Table */}
-      <div className="bg-white rounded-lg shadow-md overflow-hidden">
+  {/* Mobile: Locations as Cards */}
+  <div className="md:hidden space-y-4 pb-24">
+        {loading ? (
+          <div className="bg-white rounded-lg shadow-sm border p-6 text-center text-black font-light">
+            Loading locations...
+          </div>
+        ) : locations.length === 0 ? (
+          <div className="bg-white rounded-lg shadow-sm border p-6 text-center text-black font-light">
+            No locations found
+          </div>
+        ) : (
+          locations.map((location) => (
+            <div key={location._id} className="bg-white rounded-lg shadow-sm border p-4">
+              <div className="flex flex-wrap items-start gap-3">
+                {/* Left: Location details */}
+                <div className="flex items-start min-w-0">
+                  <FaMapMarkerAlt className={`mr-3 mt-1 flex-shrink-0 ${location.isActive ? 'text-black' : 'text-gray-400'}`} />
+                  <div className="min-w-0">
+                    <div className="text-base font-semibold text-black truncate">{location.area}</div>
+                    <div className="text-sm text-black font-medium flex flex-wrap gap-x-3 gap-y-1">
+                      <span className="min-w-0 truncate">{location.city}</span>
+                      <span className="text-gray-400">•</span>
+                      <span className="min-w-0 truncate">{location.pincode}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right: Status + Actions (minus hostel controls) */}
+                <div className="ml-auto flex items-center gap-2 flex-wrap justify-end">
+                  <span className={`px-2 py-1 text-xs rounded-full font-medium ${location.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                    {location.isActive ? 'Active' : 'Inactive'}
+                  </span>
+                  <button
+                    onClick={() => openEditModal(location)}
+                    className="text-blue-600 hover:text-blue-900"
+                    title="Edit location"
+                  >
+                    <FaEdit />
+                  </button>
+                  <button
+                    onClick={() => toggleLocationStatus(location._id)}
+                    className={location.isActive ? 'text-amber-500 hover:text-amber-700' : 'text-green-600 hover:text-green-800'}
+                    title={location.isActive ? 'Deactivate location' : 'Activate location'}
+                  >
+                    {location.isActive ? <FaToggleOff /> : <FaToggleOn />}
+                  </button>
+                </div>
+
+                {/* Hostels info row with + and dropdown aligned with info */}
+                <div className="basis-full flex items-center justify-between mt-1">
+                  <div className="text-xs text-black font-medium">
+                    {getHostelsForLocation(location._id).length} hostel(s)
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => openHostelModal(location._id)}
+                      className="text-green-600 hover:text-green-800"
+                      title="Add hostel to this location"
+                      aria-label="Add hostel"
+                    >
+                      <FaPlus />
+                    </button>
+                    <button
+                      onClick={() => toggleLocationExpansion(location._id)}
+                      className="text-blue-600 hover:text-blue-800"
+                      title={expandedLocation === location._id ? 'Hide hostels' : 'Show hostels'}
+                      aria-label={expandedLocation === location._id ? 'Hide hostels' : 'Show hostels'}
+                    >
+                      {expandedLocation === location._id ? <FaChevronUp /> : <FaChevronDown />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Collapsible Hostels within Card */}
+              {expandedLocation === location._id && (
+                <div className="mt-4 pt-4 border-t bg-gray-100 rounded-md p-3">
+                  <h4 className="font-bold text-black mb-3">Hostels in {location.area}</h4>
+                  {getHostelsForLocation(location._id).length === 0 ? (
+                    <p className="text-black text-sm font-light">No hostels found in this location.</p>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {getHostelsForLocation(location._id).map((hostel) => (
+                        <div key={hostel._id} className="bg-white p-3 rounded-md border border-gray-200">
+                          <div className="flex items-center justify-between mb-2">
+                            <h5 className="font-bold text-black">{hostel.name}</h5>
+                            <span className={`px-2 py-1 text-xs rounded-full font-medium ${hostel.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                              {hostel.isActive ? 'Active' : 'Inactive'}
+                            </span>
+                          </div>
+                          {hostel.address && (
+                            <p className="text-black text-sm mb-2 font-light">{hostel.address}</p>
+                          )}
+                          <div className="flex space-x-2">
+                            <button
+                              onClick={() => openHostelModal(null, hostel)}
+                              className="text-blue-600 hover:text-blue-900 text-sm"
+                              title="Edit hostel"
+                            >
+                              <FaEdit />
+                            </button>
+                            <button
+                              onClick={() => toggleHostelStatus(hostel._id)}
+                              className={`text-sm ${hostel.isActive ? 'text-amber-500 hover:text-amber-700' : 'text-green-600 hover:text-green-800'}`}
+                              title={hostel.isActive ? 'Deactivate hostel' : 'Activate hostel'}
+                            >
+                              {hostel.isActive ? <FaToggleOff /> : <FaToggleOn />}
+                            </button>
+                            <button
+                              onClick={() => deleteHostel(hostel._id)}
+                              className="text-red-600 hover:text-red-900 text-sm"
+                              title="Delete hostel"
+                            >
+                              <FaTrash />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Desktop: Locations Table (unchanged) */}
+  <div className="hidden md:block bg-white rounded-lg shadow-md overflow-hidden">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-100">
             <tr>
@@ -416,6 +621,9 @@ const AdminLocations = () => {
               </th>
               <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">
                 Pincode
+              </th>
+              <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">
+                Delivery Charge
               </th>
               <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">
                 Hostels
@@ -456,6 +664,15 @@ const AdminLocations = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className="text-black font-medium">{location.pincode}</span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="text-black font-medium">
+                        {location.deliveryCharge === 0 ? (
+                          <span className="text-green-600 font-semibold">Free</span>
+                        ) : (
+                          `₹${location.deliveryCharge}`
+                        )}
+                      </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center space-x-2">
@@ -507,7 +724,7 @@ const AdminLocations = () => {
                   {/* Expanded hostels row */}
                   {expandedLocation === location._id && (
                     <tr>
-                      <td colSpan="6" className="px-6 py-4 bg-gray-50">
+                      <td colSpan="7" className="px-6 py-4 bg-gray-100">
                         <div className="space-y-2">
                           <h4 className="font-bold text-black mb-3">Hostels in {location.area}</h4>
                           {getHostelsForLocation(location._id).length === 0 ? (
@@ -620,6 +837,24 @@ const AdminLocations = () => {
                     pattern="[0-9]{6}"
                     title="Pincode must be 6 digits"
                   />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-black mb-1">
+                    Delivery Charge (₹)
+                  </label>
+                  <input
+                    type="number"
+                    name="deliveryCharge"
+                    value={formData.deliveryCharge}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-black focus:border-black font-medium"
+                    placeholder="e.g. 49"
+                    required
+                    min="0"
+                    step="1"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Set to 0 for free delivery in this area</p>
                 </div>
                 
                 <div className="flex items-center">
@@ -758,6 +993,36 @@ const AdminLocations = () => {
           </div>
         </div>
       )}
+
+  {/* Floating action icons (bottom-right) - mobile only */}
+  <div className="md:hidden fixed bottom-6 right-6 z-40 flex items-center gap-3">
+        {/* Add Location */}
+        <div className="relative group">
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="bg-black text-white rounded-full w-11 h-11 flex items-center justify-center shadow-lg hover:bg-gray-800"
+            aria-label="Add Location"
+          >
+            <FaMapMarkerAlt />
+          </button>
+          <div className="absolute bottom-full mb-2 right-1/2 translate-x-1/2 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity">
+            <div className="px-2 py-1 text-xs rounded bg-gray-800 text-white whitespace-nowrap shadow-md">Add Location</div>
+          </div>
+        </div>
+        {/* Add Hostel */}
+        <div className="relative group">
+          <button
+            onClick={() => openHostelModal()}
+            className="bg-blue-600 text-white rounded-full w-11 h-11 flex items-center justify-center shadow-lg hover:bg-blue-700"
+            aria-label="Add Hostel"
+          >
+            <FaBuilding />
+          </button>
+          <div className="absolute bottom-full mb-2 right-1/2 translate-x-1/2 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity">
+            <div className="px-2 py-1 text-xs rounded bg-gray-800 text-white whitespace-nowrap shadow-md">Add Hostel</div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

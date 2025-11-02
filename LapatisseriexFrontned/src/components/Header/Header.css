@@ -1,6 +1,8 @@
 /* Header Styles */
 
-/* Apply sans-serif font to all text elements */
+/* Apply modern system font to all text elements */
+
+/* Unify font style for header, menu, location text */
 .category-swiper,
 .breadcrumb,
 .header-container,
@@ -9,7 +11,10 @@
 .nav-link,
 .auth-panel-closing,
 .mobile-menu {
-  font-family: sans-serif;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-weight: 300;
+  letter-spacing: 0.03em;
+  color: #281c20;
 }
 
 /* Special styling for the logo text */
@@ -85,11 +90,11 @@
 
 /* Premium Luxury Banner Styles */
 .luxury-banner-container {
-  background: linear-gradient(135deg, #000000 0%, #1a1a1a 25%, #000000 50%, #2a2a2a 75%, #000000 100%);
+  background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 25%, #f9a8d4 50%, #f3e8ff 75%, #fef3c7 100%);
   background-size: 400% 400%;
   animation: luxuryGradientShift 8s ease-in-out infinite;
   position: relative;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 20px rgba(244, 114, 182, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }
 
 @keyframes luxuryGradientShift {
@@ -106,7 +111,7 @@
   position: absolute;
   width: 20px;
   height: 20px;
-  background: radial-gradient(circle, rgba(255, 212, 0, 0.3) 0%, rgba(255, 212, 0, 0.1) 70%, transparent 100%);
+  background: radial-gradient(circle, rgba(244, 114, 182, 0.4) 0%, rgba(251, 146, 60, 0.2) 70%, transparent 100%);
   border-radius: 50%;
   animation: floatUp 6s infinite ease-in-out;
 }
@@ -253,11 +258,24 @@
   }
 }
 
+/* Premium gradient shift animation for View All Products button */
+@keyframes gradientShift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
 /* Star animation for banner */
 .star {
   position: absolute;
   background: #ffd700;
-  clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+  clip-path: polygon(50% 1%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
   animation: starTwinkle 3s ease-in-out infinite;
 }
 
@@ -657,11 +675,11 @@
   
   @media (max-width: 767px) {
     body.hide-location-bar main {
-      padding-top: 75px; /* Adequate padding when location bar is hidden on mobile */
+      padding-top: 0; /* No padding needed on mobile - header is not sticky */
     }
     
     main {
-      padding-top: 75px !important; /* Consistent mobile padding to prevent overlap */
+      padding-top: 0 !important; /* No padding needed on mobile - header is not sticky */
     }
   }
   
@@ -678,29 +696,29 @@
   /* Dynamic padding based on header visibility */
   @media (max-width: 767px) {
     body.scrolling-down main {
-      padding-top: 75px !important;
+      padding-top: 0 !important; /* No padding needed - mobile header is not sticky */
       transition: padding-top 0.2s ease;
     }
     
     body.scrolling-up main {
-      padding-top: 75px !important;
+      padding-top: 0 !important; /* No padding needed - mobile header is not sticky */
       transition: padding-top 0.2s ease;
     }
     
     body:not(.scrolled) main {
-      padding-top: 75px !important;
+      padding-top: 0 !important; /* No padding needed - mobile header is not sticky */
       transition: padding-top 0.2s ease;
     }
   }
   
   /* Ensure proper header height calculation */
   body.has-fixed-header {
-    --header-height-mobile: 75px; /* Adequate height to prevent overlap */
+    --header-height-mobile: 0; /* No height needed - mobile header is not sticky */
   }
   
-  /* When header slides up, reduce spacing */
+  /* When location bar is hidden, reduce spacing */
   body.has-fixed-header.header-hidden {
-    --header-height-mobile: 88px; /* Height without location bar */
+    --header-height-mobile: 0; /* No height needed - mobile header is not sticky */
   }
 }
 
@@ -1089,4 +1107,16 @@ body {
   .tooltip .tooltip-content {
     display: none !important;
   }
+}
+
+/* Gradient hover effect for profile icon */
+.profile-icon-btn:hover span {
+  background: linear-gradient(90deg, #733857 0%, #8d4466 50%, #412434 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.profile-icon-btn:hover svg {
+  filter: brightness(0) saturate(100%) invert(27%) sepia(40%) saturate(2090%) hue-rotate(304deg) brightness(91%) contrast(91%);
 }

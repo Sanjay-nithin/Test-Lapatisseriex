@@ -1,8 +1,99 @@
 import React, { useState, useEffect } from 'react';
+import { FaLeaf, FaEgg, FaCheckCircle, FaImage, FaVideo, FaMoneyBillAlt, FaCog, FaPen, FaBox } from 'react-icons/fa';
+import { GripVertical } from 'lucide-react';
 import { useProduct } from '../../../context/ProductContext/ProductContext';
 import { useCategory } from '../../../context/CategoryContext/CategoryContext';
 import MediaUploader from '../../common/MediaUpload/MediaUploader';
 import MediaPreview from '../../common/MediaUpload/MediaPreview';
+import PricingCalculator from '../../common/PricingCalculator';
+import QuickStockUpdate from './QuickStockUpdate';
+import { calculatePricing } from '../../../utils/pricingUtils';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+  rectSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
+// Sortable Media Item Component
+const SortableMediaItem = ({ id, url, type, onRemove, index }) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="relative group"
+    >
+      {/* Drag Handle */}
+      <div
+        {...attributes}
+        {...listeners}
+        className="absolute top-1 left-1 z-10 cursor-grab active:cursor-grabbing bg-white/90 rounded p-1 shadow-md opacity-0 group-hover:opacity-100 transition-opacity"
+      >
+        <GripVertical className="w-4 h-4 text-gray-600" />
+      </div>
+
+      {/* Media Preview */}
+      <div className="relative aspect-square border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
+        {type === 'video' ? (
+          <video
+            src={url}
+            className="w-full h-full object-cover"
+            muted
+            playsInline
+          />
+        ) : (
+          <img
+            src={url}
+            alt={`Media ${index + 1}`}
+            className="w-full h-full object-cover"
+          />
+        )}
+        
+        {/* Remove Button */}
+        <button
+          type="button"
+          onClick={() => onRemove(index)}
+          className="absolute top-1 right-1 bg-red-500 text-white p-1.5 rounded-full hover:bg-red-600 transition-colors opacity-0 group-hover:opacity-100 shadow-md z-10"
+        >
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+
+        {/* Order Badge */}
+        <div className="absolute bottom-1 left-1 bg-black/60 text-white text-xs px-2 py-0.5 rounded">
+          {index + 1}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // Custom hook to detect admin sidebar state
 const useAdminSidebar = () => {
@@ -61,7 +152,7 @@ const useAdminSidebar = () => {
  * Form for creating or editing a product
  */
 const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
-  const { createProduct, updateProduct } = useProduct();
+  const { createProduct, updateProduct, fetchProducts, refreshProducts } = useProduct();
   const { categories, fetchCategories } = useCategory();
   const { isSidebarOpen, isMobile } = useAdminSidebar();
   const [isEditing] = useState(!!product);
@@ -77,7 +168,7 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
     category: preSelectedCategory || '',
     images: [],
     videos: [],
-    isVeg: true,
+  isVeg: true,
     hasEgg: false, // Added hasEgg default
     isActive: true,
     id: '',
@@ -90,7 +181,19 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
 
   // Variants state
   const [variants, setVariants] = useState([
-    { quantity: '', measuringUnit: 'g', price: '', stock: '', discount: { type: null, value: 0 }, isActive: true }
+    { 
+      quantity: '', 
+      measuringUnit: 'g', 
+      price: '', 
+      stock: '', 
+      discount: { type: null, value: 0 }, 
+      isActive: true, 
+      isStockActive: false,
+      costPrice: 0,
+      profitWanted: 0,
+      freeCashExpected: 0,
+      discountPercentage: 50
+    }
   ]);
 
   // State for managing extra fields and tags
@@ -143,9 +246,26 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
       setVariants(product.variants && product.variants.length > 0
         ? product.variants.map(v => ({
             ...v,
-            stock: v.stock !== undefined && v.stock !== null ? v.stock : ''
+            stock: v.stock !== undefined && v.stock !== null ? v.stock : '',
+            isStockActive: v.isStockActive !== undefined ? v.isStockActive : false,
+            costPrice: v.costPrice || 0,
+            profitWanted: v.profitWanted || 0,
+            freeCashExpected: v.freeCashExpected || 0,
+            discountPercentage: v.discountPercentage || 50
           }))
-        : [{ quantity: '', measuringUnit: 'g', price: '', stock: '', discount: { type: null, value: 0 }, isActive: true }]
+        : [{ 
+            quantity: '', 
+            measuringUnit: 'g', 
+            price: '', 
+            stock: '', 
+            discount: { type: null, value: 0 }, 
+            isActive: true, 
+            isStockActive: false,
+            costPrice: 0,
+            profitWanted: 0,
+            freeCashExpected: 0,
+            discountPercentage: 50
+          }]
       );
     } else if (preSelectedCategory) {
       setFormData(prev => ({ ...prev, category: preSelectedCategory }));
@@ -191,6 +311,44 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
     setFormData(prev => ({ ...prev, videos: prev.videos.filter((_, i) => i !== index) }));
   };
 
+  // Drag and drop handlers for images
+  const handleImageDragEnd = (event) => {
+    const { active, over } = event;
+    if (active.id !== over.id) {
+      setFormData(prev => {
+        const oldIndex = prev.images.findIndex((_, idx) => `image-${idx}` === active.id);
+        const newIndex = prev.images.findIndex((_, idx) => `image-${idx}` === over.id);
+        return {
+          ...prev,
+          images: arrayMove(prev.images, oldIndex, newIndex)
+        };
+      });
+    }
+  };
+
+  // Drag and drop handlers for videos
+  const handleVideoDragEnd = (event) => {
+    const { active, over } = event;
+    if (active.id !== over.id) {
+      setFormData(prev => {
+        const oldIndex = prev.videos.findIndex((_, idx) => `video-${idx}` === active.id);
+        const newIndex = prev.videos.findIndex((_, idx) => `video-${idx}` === over.id);
+        return {
+          ...prev,
+          videos: arrayMove(prev.videos, oldIndex, newIndex)
+        };
+      });
+    }
+  };
+
+  // Sensors for drag and drop
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
   // Extra fields
   const handleAddExtraField = () => {
     if (!newFieldName.trim()) return;
@@ -213,11 +371,28 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
     setFormData(prev => ({ ...prev, tags: prev.tags.filter(t => t !== tag) }));
   };
 
+  // Calculate MRP using centralized pricing utility
+  const calculateMRP = (variant) => {
+    const pricing = calculatePricing(variant);
+    return pricing.mrp;
+  };
+
   // Variants handlers
   const handleAddVariant = () => {
     setVariants(prev => [
       ...prev, 
-      { quantity: '', measuringUnit: 'g', price: '', stock: '', discount: { type: null, value: 0 }, isActive: true }
+      { 
+        quantity: '', 
+        measuringUnit: 'g', 
+        price: '', 
+        stock: '', 
+        discount: { type: null, value: 0 }, 
+        isActive: true,
+        costPrice: 0,
+        profitWanted: 0,
+        freeCashExpected: 0,
+        discountPercentage: 50
+      }
     ]);
   };
   
@@ -252,21 +427,41 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
       const extraFields = {};
       extraFieldsArray.forEach(field => { extraFields[field.key] = field.value; });
 
-      // Prepare final data - handle optional stock field
+      // Prepare final data - handle optional stock field and auto-calculate MRP
       const finalData = {
         ...formData,
         extraFields,
-        variants: variants.map(v => ({
-          ...v,
-          quantity: Number(v.quantity),
-          price: Number(v.price),
-          stock: v.stock === '' ? undefined : Number(v.stock),
-          discount: { type: v.discount.type || null, value: Number(v.discount.value) || 0 }
-        }))
+        variants: variants.map(v => {
+          // Calculate MRP if pricing calculator inputs are provided
+          let finalPrice = Number(v.price);
+          const hasPricingInputs = (v.costPrice > 0 || v.profitWanted > 0 || v.freeCashExpected > 0);
+          
+          if (hasPricingInputs) {
+            finalPrice = calculateMRP(v);
+          }
+          
+          return {
+            ...v,
+            quantity: Number(v.quantity),
+            price: finalPrice,
+            isStockActive: !!v.isStockActive,
+            stock: v.isStockActive ? (v.stock === '' ? 0 : Number(v.stock)) : undefined,
+            discount: { type: v.discount.type || null, value: Number(v.discount.value) || 0 },
+            costPrice: Number(v.costPrice) || 0,
+            profitWanted: Number(v.profitWanted) || 0,
+            freeCashExpected: Number(v.freeCashExpected) || 0,
+            discountPercentage: Number(v.discountPercentage) || 50
+          };
+        })
       };
 
       if (isEditing) await updateProduct(product._id, finalData);
       else await createProduct(finalData);
+
+      console.log('✅ Product saved successfully, refreshing product list...');
+      
+      // Force refresh products to ensure immediate display with fresh server data
+      await refreshProducts({ isActive: 'all' });
 
       setSuccess(true);
       setTimeout(() => onClose(), 1500);
@@ -322,10 +517,11 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
       <div className="mb-8 border-b border-gray-200">
         <nav className="flex flex-wrap -mb-px gap-1 sm:gap-0">
           {[
-            { key: 'basic', label: 'Basic Info', icon: '📝' },
-            { key: 'media', label: 'Media', icon: '🖼️' },
-            { key: 'pricing', label: 'Pricing & Stock', icon: '💰' },
-            { key: 'details', label: 'Details', icon: '⚙️' }
+            { key: 'basic', label: 'Basic Info', icon: <FaPen /> },
+            { key: 'media', label: 'Media', icon: <FaImage /> },
+            { key: 'pricing', label: 'Pricing & Stock', icon: <FaMoneyBillAlt /> },
+            ...(isEditing ? [{ key: 'stock', label: 'Stock Management', icon: <FaBox /> }] : []),
+            { key: 'details', label: 'Details', icon: <FaCog /> }
           ].map(tab => (
             <button
               key={tab.key}
@@ -337,7 +533,7 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
                   : 'text-gray-600 hover:text-pink-600 hover:bg-gray-50'
               }`}
             >
-              <span className="mr-2 text-base">{tab.icon}</span>
+              <span className="mr-2 text-base inline-flex items-center">{tab.icon}</span>
               <span className="hidden sm:inline">{tab.label}</span>
               <span className="sm:hidden">{tab.label.split(' ')[0]}</span>
             </button>
@@ -367,6 +563,25 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
                 placeholder="Enter product name"
                 required
               />
+            </div>
+
+            {/* Product ID */}
+            <div className="space-y-2">
+              <label className="block text-sm font-semibold text-gray-800">
+                Product ID <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                name="id"
+                value={formData.id}
+                onChange={handleChange}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-500 focus:border-pink-500 transition-colors"
+                placeholder="e.g., TIRAM-007, CAKE-001"
+                required
+              />
+              <p className="text-xs text-gray-500">
+                Enter a unique product ID (e.g., TIRAM-007 for Tiramisu, CAKE-001 for Cakes)
+              </p>
             </div>
 
             {/* Description */}
@@ -399,8 +614,8 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
                 required
               >
                 <option value="">Select a category</option>
-                {categories.map(cat => (
-                  <option key={cat._id} value={cat._id}>{cat.name}</option>
+                {[...new Map(categories.map(cat => [(cat?._id || cat?.id), cat])).values()].map(cat => (
+                  <option key={cat._id || cat.id} value={cat._id || cat.id}>{cat.name}</option>
                 ))}
               </select>
             </div>
@@ -418,7 +633,7 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
                     className="h-4 w-4 text-pink-500 focus:ring-pink-500 border-gray-300 rounded"
                   />
                   <div className="flex items-center space-x-2">
-                    <span className="text-green-600">🥬</span>
+                    <FaLeaf className="text-green-600" />
                     <span className="text-sm font-medium text-gray-700">Vegetarian</span>
                   </div>
                 </label>
@@ -432,7 +647,7 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
                     className="h-4 w-4 text-pink-500 focus:ring-pink-500 border-gray-300 rounded"
                   />
                   <div className="flex items-center space-x-2">
-                    <span className="text-orange-600">🥚</span>
+                    <FaEgg className="text-orange-600" />
                     <span className="text-sm font-medium text-gray-700">Contains Egg</span>
                   </div>
                 </label>
@@ -446,7 +661,7 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
                     className="h-4 w-4 text-pink-500 focus:ring-pink-500 border-gray-300 rounded"
                   />
                   <div className="flex items-center space-x-2">
-                    <span className="text-green-600">✅</span>
+                    <FaCheckCircle className="text-green-600" />
                     <span className="text-sm font-medium text-gray-700">Active Product</span>
                   </div>
                 </label>
@@ -462,7 +677,7 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
             {/* Product Images Section */}
             <div className="space-y-4">
               <div className="flex items-center space-x-2">
-                <span className="text-lg">🖼️</span>
+                <FaImage className="text-lg" />
                 <h3 className="text-lg font-semibold text-gray-800">Product Images</h3>
                 <span className="text-red-500 text-sm">*</span>
               </div>
@@ -477,12 +692,35 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
                       </svg>
                       <span>{formData.images.length} image{formData.images.length !== 1 ? 's' : ''} uploaded</span>
                     </div>
+                    <div className="text-xs text-gray-500 flex items-center gap-1">
+                      <GripVertical className="w-3 h-3" />
+                      <span>Drag to reorder</span>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 p-4 bg-gray-50 rounded-lg border">
-                    <MediaPreview
-                      mediaUrls={formData.images}
-                      onRemove={handleRemoveImage}
-                    />
+                  <div className="p-4 bg-gray-50 rounded-lg border">
+                    <DndContext
+                      sensors={sensors}
+                      collisionDetection={closestCenter}
+                      onDragEnd={handleImageDragEnd}
+                    >
+                      <SortableContext
+                        items={formData.images.map((_, idx) => `image-${idx}`)}
+                        strategy={rectSortingStrategy}
+                      >
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                          {formData.images.map((url, idx) => (
+                            <SortableMediaItem
+                              key={`image-${idx}`}
+                              id={`image-${idx}`}
+                              url={url}
+                              type="image"
+                              index={idx}
+                              onRemove={handleRemoveImage}
+                            />
+                          ))}
+                        </div>
+                      </SortableContext>
+                    </DndContext>
                   </div>
                 </div>
               )}
@@ -508,7 +746,7 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
             {/* Product Videos Section */}
             <div className="space-y-4">
               <div className="flex items-center space-x-2">
-                <span className="text-lg">🎥</span>
+                <FaVideo className="text-lg" />
                 <h3 className="text-lg font-semibold text-gray-800">Product Videos</h3>
                 <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">Optional</span>
               </div>
@@ -523,12 +761,35 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
                       </svg>
                       <span>{formData.videos.length} video{formData.videos.length !== 1 ? 's' : ''} uploaded</span>
                     </div>
+                    <div className="text-xs text-gray-500 flex items-center gap-1">
+                      <GripVertical className="w-3 h-3" />
+                      <span>Drag to reorder</span>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 p-4 bg-gray-50 rounded-lg border">
-                    <MediaPreview
-                      mediaUrls={formData.videos}
-                      onRemove={handleRemoveVideo}
-                    />
+                  <div className="p-4 bg-gray-50 rounded-lg border">
+                    <DndContext
+                      sensors={sensors}
+                      collisionDetection={closestCenter}
+                      onDragEnd={handleVideoDragEnd}
+                    >
+                      <SortableContext
+                        items={formData.videos.map((_, idx) => `video-${idx}`)}
+                        strategy={rectSortingStrategy}
+                      >
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {formData.videos.map((url, idx) => (
+                            <SortableMediaItem
+                              key={`video-${idx}`}
+                              id={`video-${idx}`}
+                              url={url}
+                              type="video"
+                              index={idx}
+                              onRemove={handleRemoveVideo}
+                            />
+                          ))}
+                        </div>
+                      </SortableContext>
+                    </DndContext>
                   </div>
                 </div>
               )}
@@ -559,7 +820,7 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
             {/* Header */}
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
-                <span className="text-lg">💰</span>
+                <FaMoneyBillAlt className="text-lg" />
                 <h3 className="text-lg font-semibold text-gray-800">Pricing & Stock</h3>
                 <span className="text-red-500 text-sm">*</span>
               </div>
@@ -574,6 +835,8 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
                 <span>Add Variant</span>
               </button>
             </div>
+
+            {/* Per-variant stock tracking toggle is provided inside each variant card */}
 
             {/* Variants */}
             {variants.length === 0 ? (
@@ -659,60 +922,255 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
                             required
                           />
                         </div>
+                        {(() => {
+                          const hasPricingInputs = (variant.costPrice > 0 || variant.profitWanted > 0 || variant.freeCashExpected > 0);
+                          if (hasPricingInputs) {
+                            const calculatedMRP = calculateMRP(variant);
+                            return (
+                              <p className="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                                💡 Will be auto-updated to ₹{calculatedMRP.toFixed(2)} based on pricing calculator
+                              </p>
+                            );
+                          }
+                          return (
+                            <p className="text-xs text-gray-500">
+                              Manual price entry (use pricing calculator below for auto-calculation)
+                            </p>
+                          );
+                        })()}
                       </div>
                     </div>
 
-                    {/* Stock and Discount */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="block text-sm font-semibold text-gray-700">
-                          Stock Quantity
-                        </label>
-                        <input
-                          type="number"
-                          value={variant.stock}
-                          onChange={(e) => handleVariantChange(idx, 'stock', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-500 focus:border-pink-500 transition-colors"
-                          placeholder="Leave empty for unlimited"
-                          min="0"
-                        />
-                        <p className="text-xs text-gray-500">Leave empty for unlimited stock</p>
+                    {/* Pricing Calculator Section */}
+                    <div className="mb-6 bg-blue-50 rounded-lg p-4 border border-blue-200">
+                      <div className="flex items-center justify-between mb-4">
+                        <h4 className="text-sm font-semibold text-blue-800">Pricing Calculator</h4>
+                        <span className="text-xs text-blue-600 bg-blue-100 px-2 py-1 rounded-full">Auto-updates price on save</span>
                       </div>
-
-                      <div className="space-y-2">
-                        <label className="block text-sm font-semibold text-gray-700">
-                          Discount Type
-                        </label>
-                        <select
-                          value={variant.discount.type || ''}
-                          onChange={(e) => handleVariantChange(idx, 'discount.type', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-500 focus:border-pink-500 transition-colors bg-white"
-                        >
-                          <option value="">No Discount</option>
-                          <option value="flat">Flat Amount (₹)</option>
-                          <option value="percentage">Percentage (%)</option>
-                        </select>
-                      </div>
-
-                      {variant.discount.type && (
+                      
+                      {/* Manual Input Fields */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                         <div className="space-y-2">
-                          <label className="block text-sm font-semibold text-gray-700">
-                            Discount Value
-                          </label>
+                          <label className="block text-sm font-medium text-gray-700">Cost Price</label>
                           <div className="relative">
-                            <span className="absolute left-3 top-2 text-gray-500">
-                              {variant.discount.type === 'percentage' ? '%' : '₹'}
-                            </span>
+                            <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">₹</span>
                             <input
                               type="number"
-                              value={variant.discount.value}
-                              onChange={(e) => handleVariantChange(idx, 'discount.value', e.target.value)}
-                              className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-500 focus:border-pink-500 transition-colors"
+                              value={variant.costPrice || ''}
+                              onChange={(e) => handleVariantChange(idx, 'costPrice', e.target.value === '' ? 0 : Number(e.target.value))}
+                              className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                               placeholder="0"
                               min="0"
-                              step={variant.discount.type === 'percentage' ? '1' : '0.01'}
+                              step="0.01"
                             />
                           </div>
+                        </div>
+                        
+                        <div className="space-y-2">
+                          <label className="block text-sm font-medium text-gray-700">Profit Wanted</label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">₹</span>
+                            <input
+                              type="number"
+                              value={variant.profitWanted || ''}
+                              onChange={(e) => handleVariantChange(idx, 'profitWanted', e.target.value === '' ? 0 : Number(e.target.value))}
+                              className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              placeholder="0"
+                              min="0"
+                              step="0.01"
+                            />
+                          </div>
+                        </div>
+                        
+                        <div className="space-y-2">
+                          <label className="block text-sm font-medium text-gray-700">Free Cash Expected</label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">₹</span>
+                            <input
+                              type="number"
+                              value={variant.freeCashExpected || ''}
+                              onChange={(e) => handleVariantChange(idx, 'freeCashExpected', e.target.value === '' ? 0 : Number(e.target.value))}
+                              className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              placeholder="0"
+                              min="0"
+                              step="0.01"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Discount Configuration */}
+                      <div className="bg-yellow-50 rounded-lg p-3 border border-yellow-200 mb-4">
+                        <h5 className="text-sm font-medium text-yellow-800 mb-3">Discount Configuration</h5>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          <div className="space-y-2">
+                            <label className="block text-xs font-medium text-gray-700">Discount Type</label>
+                            <select
+                              value={variant.discount?.type || ''}
+                              onChange={(e) => handleVariantChange(idx, 'discount.type', e.target.value || null)}
+                              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+                            >
+                              <option value="">No Discount</option>
+                              <option value="percentage">Percentage (%)</option>
+                              <option value="flat">Flat Amount (₹)</option>
+                            </select>
+                          </div>
+
+                          {variant.discount?.type && (
+                            <div className="space-y-2">
+                              <label className="block text-xs font-medium text-gray-700">Discount Value</label>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 text-sm">
+                                  {variant.discount.type === 'percentage' ? '%' : '₹'}
+                                </span>
+                                <input
+                                  type="number"
+                                  value={variant.discount?.value || ''}
+                                  onChange={(e) => {
+                                    const value = Number(e.target.value) || 0;
+                                    if (variant.discount.type === 'percentage') {
+                                      handleVariantChange(idx, 'discount.value', Math.max(0, Math.min(100, value)));
+                                    } else {
+                                      handleVariantChange(idx, 'discount.value', Math.max(0, value));
+                                    }
+                                  }}
+                                  className="w-full pl-8 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                  placeholder={variant.discount.type === 'percentage' ? '50' : '100'}
+                                  min="0"
+                                  max={variant.discount.type === 'percentage' ? '100' : undefined}
+                                  step={variant.discount.type === 'percentage' ? '1' : '0.01'}
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {/* Display Calculator Results */}
+                      <div className="mt-4 space-y-3">
+                        <h5 className="text-sm font-medium text-gray-700">Calculation Results:</h5>
+                        {(() => {
+                          const costPrice = variant.costPrice || 0;
+                          const profitWanted = variant.profitWanted || 0;
+                          const freeCashExpected = variant.freeCashExpected || 0;
+                          
+                          // Use centralized pricing calculation for consistency
+                          const pricing = calculatePricing(variant);
+                          const yourReturn = costPrice + profitWanted;
+                          
+                          return (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              <div className="bg-green-100 rounded-lg p-3 border border-green-200">
+                                <div className="flex justify-between items-center">
+                                  <span className="text-sm font-medium text-green-700">MRP (Original Price)</span>
+                                  <span className="text-lg font-bold text-green-800">₹{pricing.mrp.toFixed(2)}</span>
+                                </div>
+                                <div className="text-xs text-green-600 mt-1">✓ Will be auto-applied when saved</div>
+                              </div>
+                              <div className="bg-purple-100 rounded-lg p-3 border border-purple-200">
+                                <div className="flex justify-between items-center">
+                                  <span className="text-sm font-medium text-purple-700">Your Return</span>
+                                  <span className="text-lg font-bold text-purple-800">₹{yourReturn.toFixed(2)}</span>
+                                </div>
+                                <div className="text-xs text-purple-600 mt-1">Cost + Profit you get</div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                        
+                        {/* Formula Display */}
+                        <div className="bg-amber-50 rounded-lg p-3 border border-amber-200">
+                          <div className="text-xs text-amber-700 space-y-1">
+                            <div><strong>Step 1:</strong> Final Price = {variant.costPrice || 0} + {variant.profitWanted || 0} + {variant.freeCashExpected || 0} = ₹{((variant.costPrice || 0) + (variant.profitWanted || 0) + (variant.freeCashExpected || 0)).toFixed(2)}</div>
+                            <div><strong>Step 2:</strong> 
+                              {(() => {
+                                const pricing = calculatePricing(variant);
+                                const discountType = variant.discount?.type;
+                                const discountValue = variant.discount?.value || 0;
+                                
+                                if (discountType === 'flat') {
+                                  return ` MRP = Final Price + Flat Discount = ${pricing.finalPrice.toFixed(2)} + ${discountValue} = ₹${pricing.mrp.toFixed(2)}`;
+                                } else if (discountType === 'percentage') {
+                                  return ` MRP = ((Discount% + 100) ÷ 100) × Final Price = ((${discountValue} + 100) ÷ 100) × ${pricing.finalPrice.toFixed(2)} = ₹${pricing.mrp.toFixed(2)}`;
+                                } else {
+                                  return ` MRP = Final Price (No discount) = ₹${pricing.mrp.toFixed(2)}`;
+                                }
+                              })()}
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {/* ProductCard-like Price Display */}
+                        <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
+                          <h6 className="text-sm font-medium text-blue-700 mb-2">Customer View Preview:</h6>
+                          {(() => {
+                            const costPrice = variant.costPrice || 0;
+                            const profitWanted = variant.profitWanted || 0;
+                            const freeCashExpected = variant.freeCashExpected || 0;
+                            const discountType = variant.discount?.type;
+                            const discountValue = variant.discount?.value || 0;
+                            
+                            // Use centralized pricing calculation for consistency
+                            const pricing = calculatePricing(variant);
+                            
+                            return (
+                              <div className="inline-block max-w-xs">
+                                <div className="bg-white rounded-lg p-3 border border-gray-200 shadow-sm">
+                                  <div className="space-y-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-lg font-bold text-green-600">₹{Math.round(pricing.finalPrice)}</span>
+                                      {pricing.discountPercentage > 0 && (
+                                        <span className="text-sm text-gray-500 line-through">₹{Math.round(pricing.mrp)}</span>
+                                      )}
+                                    </div>
+                                    {pricing.discountPercentage > 0 && (
+                                      <span className="text-xs text-green-600 font-medium">{pricing.discountPercentage}% OFF</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Variant-level tracking and Stock/Discount */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="block text-sm font-semibold text-gray-700">Track stock (this variant)</label>
+                        <div className="inline-flex rounded-md border border-gray-300 overflow-hidden">
+                          <button
+                            type="button"
+                            className={`px-3 py-2 text-sm ${variant.isStockActive ? 'bg-pink-500 text-white' : 'bg-white text-gray-800 hover:bg-gray-50'}`}
+                            onClick={() => handleVariantChange(idx, 'isStockActive', true)}
+                          >
+                            Yes
+                          </button>
+                          <button
+                            type="button"
+                            className={`px-3 py-2 text-sm border-l border-gray-300 ${!variant.isStockActive ? 'bg-pink-500 text-white' : 'bg-white text-gray-800 hover:bg-gray-50'}`}
+                            onClick={() => handleVariantChange(idx, 'isStockActive', false)}
+                          >
+                            No
+                          </button>
+                        </div>
+                        <p className="text-xs text-gray-500">If No, the cart won’t limit quantity for this variant.</p>
+                      </div>
+
+                      {variant.isStockActive && (
+                        <div className="space-y-2">
+                          <label className="block text-sm font-semibold text-gray-700">Stock Quantity</label>
+                          <input
+                            type="number"
+                            value={variant.stock}
+                            onChange={(e) => handleVariantChange(idx, 'stock', e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-500 focus:border-pink-500 transition-colors"
+                            placeholder="Enter stock quantity"
+                            min="0"
+                          />
+                          <p className="text-xs text-gray-500">Set stock to 0 when sold out</p>
                         </div>
                       )}
                     </div>
@@ -777,6 +1235,29 @@ const ProductForm = ({ product = null, onClose, preSelectedCategory = '' }) => {
               </div>
             </div>
           </>
+        )}
+
+        {/* STOCK MANAGEMENT TAB - Only available for existing products */}
+        {activeTab === 'stock' && isEditing && (
+          <div className="space-y-6">
+            <QuickStockUpdate 
+              productId={product?._id}
+              variants={formData.variants || []}
+              onStockUpdate={(variantIndex, result) => {
+                // Update local form data to reflect the stock change
+                if (result.success) {
+                  setFormData(prev => ({
+                    ...prev,
+                    variants: prev.variants.map((variant, idx) => 
+                      idx === variantIndex 
+                        ? { ...variant, stock: result.updatedStock, isStockActive: result.isStockActive }
+                        : variant
+                    )
+                  }));
+                }
+              }}
+            />
+          </div>
         )}
 
         <div className="mt-6">

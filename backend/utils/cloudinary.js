@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import { v2 as cloudinary } from 'cloudinary';
 import crypto from 'crypto';
+import { Readable } from 'stream';
 
 dotenv.config();
 
@@ -9,8 +10,38 @@ cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
-  secure: true
+  secure: true,
+  timeout: 120000 // 120 seconds timeout (increased for video uploads)
 });
+
+/**
+ * Upload a file to Cloudinary using stream (better for large files)
+ * @param {string} base64Data - The base64 data of the file
+ * @param {object} options - Upload options
+ * @returns {Promise} - The upload result
+ */
+const uploadViaStream = (base64Data, options) => {
+  return new Promise((resolve, reject) => {
+    // Convert base64 to buffer
+    const base64String = base64Data.split(',')[1];
+    const buffer = Buffer.from(base64String, 'base64');
+    
+    const uploadStream = cloudinary.uploader.upload_stream(
+      options,
+      (error, result) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve(result);
+        }
+      }
+    );
+    
+    // Create a readable stream from buffer
+    const bufferStream = Readable.from(buffer);
+    bufferStream.pipe(uploadStream);
+  });
+};
 
 /**
  * Upload a file to Cloudinary
@@ -30,11 +61,19 @@ export const uploadToCloudinary = async (filePath, options = {}) => {
   // Clean up the options to avoid conflicts
   const cleanOptions = {
     folder,
-    resource_type: 'image',
+    resource_type: options.resource_type || 'image',
     overwrite: true,
     unique_filename: true,
-    use_filename: false
+    use_filename: false,
   };
+
+  // Only add transformations for images, not videos
+  if (cleanOptions.resource_type === 'image') {
+    cleanOptions.transformation = options.transformation || [
+      { fetch_format: 'auto', quality: 'auto' },
+      { width: 1600, crop: 'limit' }
+    ];
+  }
 
   // Add additional options if provided (but be very careful about format)
   if (options.allowed_formats && Array.isArray(options.allowed_formats)) {
@@ -44,13 +83,31 @@ export const uploadToCloudinary = async (filePath, options = {}) => {
   // Log the options for debugging
   console.log('Cloudinary upload options:', cleanOptions);
   console.log('File data type:', typeof filePath);
-  console.log('File data starts with data:image/', filePath.startsWith('data:image/'));
+  console.log('File data starts with data:video/ or data:image/', 
+    filePath.startsWith('data:video/') || filePath.startsWith('data:image/'));
   
   try {
     console.log('=== CLOUDINARY UPLOAD ATTEMPT ===');
     console.log('Upload options:', JSON.stringify(cleanOptions, null, 2));
     
-    const result = await cloudinary.uploader.upload(filePath, cleanOptions);
+    let result;
+    
+    // Use chunked upload for videos (more reliable for large files)
+    if (cleanOptions.resource_type === 'video') {
+      cleanOptions.chunk_size = 6000000; // 6MB chunks
+      console.log('Using chunked upload for video with 6MB chunks');
+      
+      // For videos, use stream upload which is more reliable
+      if (filePath.startsWith('data:')) {
+        console.log('Using stream upload method for video');
+        result = await uploadViaStream(filePath, cleanOptions);
+      } else {
+        result = await cloudinary.uploader.upload(filePath, cleanOptions);
+      }
+    } else {
+      // For images, use regular upload
+      result = await cloudinary.uploader.upload(filePath, cleanOptions);
+    }
     
     console.log('=== CLOUDINARY UPLOAD SUCCESS ===');
     console.log('Result details:', {
@@ -87,9 +144,15 @@ export const uploadToCloudinary = async (filePath, options = {}) => {
       throw new Error('Cloudinary authentication failed - check API credentials');
     } else if (error.http_code === 400) {
       throw new Error(`Cloudinary request error: ${error.message}`);
+    } else if (error.http_code === 499 || error.name === 'TimeoutError' || error.error?.name === 'TimeoutError') {
+      throw new Error('Cloudinary upload timeout - file may be too large or network is slow. Try a smaller image or check your internet connection.');
+    } else if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
+      throw new Error('Network timeout while uploading to Cloudinary. Please check your internet connection and try again.');
+    } else if (!error.http_code && error.message?.includes('timeout')) {
+      throw new Error('Upload timeout. Please try with a smaller image or check your network connection.');
     }
     
-    throw new Error(`Failed to upload file: ${error.message}`);
+    throw new Error(`Failed to upload file: ${error.message || 'Unknown error'}`);
   }
 };
 
