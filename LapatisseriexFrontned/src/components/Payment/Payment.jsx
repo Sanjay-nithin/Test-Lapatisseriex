@@ -17,6 +17,14 @@ import { getOrderExperienceInfo } from '../../utils/orderExperience';
 import api from '../../services/apiService';
 import NGOSidePanel from './NGOSidePanel';
 
+// Email API URL for Vercel (order confirmation and payment success emails)
+const getEmailApiUrl = () => {
+  const vercelUrl = import.meta.env?.VITE_VERCEL_API_URL;
+  const renderUrl = import.meta.env?.VITE_API_URL;
+  console.log(`📧 [Payment Email API] Using: ${(vercelUrl && vercelUrl.trim()) || (renderUrl && renderUrl.trim()) || '/api'}`);
+  return (vercelUrl && vercelUrl.trim()) || (renderUrl && renderUrl.trim()) || '/api';
+};
+
 const AUTO_REDIRECT_STORAGE_KEY = 'lapatisserie_payment_redirect';
 const AUTO_REDIRECT_DELAY_MS = 20000;
 const AUTO_REDIRECT_EXPIRY_MS = 2 * 60 * 1000; // expire redirect marker after 2 minutes
@@ -501,16 +509,34 @@ const Payment = () => {
         }
       };
 
-      const { data } = await api.post('/payments/create-order', orderData);
+      const emailApiUrl = getEmailApiUrl();
+      console.log('═════════════════════════════════════════════════════════');
+      console.log('📧 [ORDER EMAIL] Creating order - Will trigger confirmation emails');
+      console.log('🌐 API URL Used:', emailApiUrl);
+      console.log('👤 User Email:', user?.email);
+      console.log('💰 Order Amount:', grandTotal);
+      console.log('💳 Payment Method:', paymentMethod);
+      console.log('═════════════════════════════════════════════════════════');
+      
+      const { data } = await api.post('/payments/create-order', orderData, {
+        baseURL: emailApiUrl  // Override baseURL to use Vercel for order confirmation email
+      });
       
       // Handle duplicate order response
       if (data.isDuplicate) {
         console.log('⚠️ Duplicate order detected, using existing order:', data.orderNumber);
+        console.log('📧 [ORDER EMAIL] Skipping email (duplicate order)');
+      } else {
+        console.log('✅ [ORDER EMAIL] Order created successfully!');
+        console.log('📧 Order Number:', data.orderNumber);
+        console.log('✉️ Confirmation email should be sent to:', user?.email);
+        console.log('✉️ Admin notification should be sent to active admins');
+        console.log('═════════════════════════════════════════════════════════');
       }
       
       return data;
     } catch (error) {
-      console.error('Error creating order:', error);
+      console.error('❌ Error creating order:', error);
       throw error;
     }
   };
@@ -555,21 +581,30 @@ const Payment = () => {
           }
           window.__paymentVerifying = true;
           try {
-            console.log('✅ Payment successful, verifying...');
-            const verifyResponse = await fetch(`${import.meta.env.VITE_API_URL}/payments/verify`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                razorpay_order_id: response.razorpay_order_id,
-                razorpay_payment_id: response.razorpay_payment_id,
-                razorpay_signature: response.razorpay_signature,
-              }),
+            const emailApiUrl = getEmailApiUrl();
+            console.log('═════════════════════════════════════════════════════════');
+            console.log('📧 [PAYMENT EMAIL] Verifying payment - Will trigger success emails');
+            console.log('🌐 API URL Used:', emailApiUrl);
+            console.log('👤 User Email:', user?.email);
+            console.log('💳 Payment ID:', response.razorpay_payment_id);
+            console.log('📦 Order ID:', response.razorpay_order_id);
+            console.log('═════════════════════════════════════════════════════════');
+            
+            const verifyResponse = await api.post('/payments/verify', {
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+            }, {
+              baseURL: emailApiUrl  // Override baseURL to use Vercel for payment success email
             });
-            const verifyData = await verifyResponse.json();
+            
+            const verifyData = verifyResponse.data;
             if (verifyData.success) {
-              console.log('✅ Payment verified successfully');
+              console.log('✅ [PAYMENT EMAIL] Payment verified successfully!');
+              console.log('📧 Order Number:', verifyData.orderNumber);
+              console.log('✉️ Payment success email should be sent to:', user?.email);
+              console.log('✉️ Admin order notification should be sent to active admins');
+              console.log('═════════════════════════════════════════════════════════');
               setCompletedPaymentMethod('razorpay');
               setIsOrderComplete(true);
               setOrderNumber(verifyData.orderNumber);

@@ -684,6 +684,11 @@ export const createOrder = asyncHandler(async (req, res) => {
       // Send emails asynchronously in parallel (customer and admin simultaneously) - Execute immediately
       (async () => {
         try {
+          console.log('═══════════════════════════════════════════════════════════════');
+          console.log('🎯 [PAYMENT CONTROLLER] COD Order Created - Triggering Emails');
+          console.log('📦 Order Number:', order.orderNumber);
+          console.log('═══════════════════════════════════════════════════════════════');
+          
           const user = await User.findById(userId).select('email name phone');
           const orderDetailsForEmail = buildOrderDetailsForEmail(order, user);
 
@@ -694,15 +699,16 @@ export const createOrder = asyncHandler(async (req, res) => {
           
           // Customer email
           if (userEmailTarget) {
-            console.log('Sending COD order confirmation email to:', userEmailTarget);
+            console.log('📧 [PAYMENT CONTROLLER] Calling sendOrderConfirmationEmail()');
+            console.log('✉️  Target:', userEmailTarget);
             const logoData = getLogoData();
             emailPromises.push(
               sendOrderConfirmationEmail(orderDetailsForEmail, userEmailTarget, logoData)
                 .then(result => {
                   if (result.success) {
-                    console.log('✅ Order confirmation email sent successfully:', result.messageId);
+                    console.log('✅ [PAYMENT CONTROLLER] Customer email sent:', result.messageId);
                   } else {
-                    console.error('❌ Failed to send order confirmation email:', result.error);
+                    console.error('❌ [PAYMENT CONTROLLER] Customer email failed:', result.error);
                   }
                   return result;
                 })
@@ -898,6 +904,11 @@ export const verifyPayment = asyncHandler(async (req, res) => {
       // Send order confirmation email asynchronously in parallel for online payments (customer and admin simultaneously) - Execute immediately
       (async () => {
         try {
+          console.log('═══════════════════════════════════════════════════════════════');
+          console.log('🎯 [PAYMENT CONTROLLER] Online Payment Verified - Triggering Emails');
+          console.log('📦 Order Number:', order.orderNumber);
+          console.log('═══════════════════════════════════════════════════════════════');
+          
           const user = await User.findById(order.userId).select('email name phone');
           const orderDetailsForEmail = buildOrderDetailsForEmail(order, user);
 
@@ -908,21 +919,22 @@ export const verifyPayment = asyncHandler(async (req, res) => {
           
           // Customer email
           if (userEmailTarget) {
-            console.log('Sending online payment order confirmation email to:', userEmailTarget);
+            console.log('📧 [PAYMENT CONTROLLER] Calling sendOrderConfirmationEmail()');
+            console.log('✉️  Target:', userEmailTarget);
             const logoData = getLogoData();
             emailPromises.push(
               sendOrderConfirmationEmail(orderDetailsForEmail, userEmailTarget, logoData)
                 .then(result => {
                   if (result.success) {
-                    console.log('✅ Order confirmation email sent successfully:', result.messageId);
+                    console.log('✅ [PAYMENT CONTROLLER] Customer email sent:', result.messageId);
                   } else {
-                    console.error('❌ Failed to send order confirmation email:', result.error);
+                    console.error('❌ [PAYMENT CONTROLLER] Customer email failed:', result.error);
                   }
                   return result;
                 })
             );
           } else {
-            console.log('⚠️ User email not found, skipping confirmation email');
+            console.log('⚠️ [PAYMENT CONTROLLER] User email not found, skipping confirmation email');
           }
 
           // Admin email
@@ -941,16 +953,21 @@ export const verifyPayment = asyncHandler(async (req, res) => {
                 })
             );
           } else {
-            console.log('⚠️ No admin recipients configured; skipping admin order email');
+            console.log('⚠️ [PAYMENT CONTROLLER] No admin recipients configured; skipping admin email');
           }
           
           // Wait for all emails to complete
           await Promise.all(emailPromises);
+          console.log('═══════════════════════════════════════════════════════════════');
+          console.log('✅ [PAYMENT CONTROLLER] All online payment emails completed');
+          console.log('═══════════════════════════════════════════════════════════════');
           
         } catch (emailError) {
-          console.error('❌ Error sending order placement emails (async):', emailError.message);
+          console.error('═══════════════════════════════════════════════════════════════');
+          console.error('❌ [PAYMENT CONTROLLER] Error sending order placement emails:', emailError.message);
+          console.error('═══════════════════════════════════════════════════════════════');
         }
-      })().catch(err => console.error('❌ Email sending error:', err));
+      })().catch(err => console.error('❌ [PAYMENT CONTROLLER] Email sending error:', err));
 
       // Emit WebSocket event to notify admin of new online order
       try {

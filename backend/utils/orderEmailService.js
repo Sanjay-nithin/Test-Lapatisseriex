@@ -358,6 +358,15 @@ export const sendOrderStatusNotification = async (orderDetails, newStatus, userE
 // Send order confirmation email (when order is first created) - UPDATED
 export const sendOrderConfirmationEmail = async (orderDetails, userEmail, logoData = null, productImagesData = []) => {
   try {
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('📧 [BACKEND] SENDING ORDER CONFIRMATION EMAIL');
+    console.log('🌐 Backend Service: Vercel/Render (check deployment)');
+    console.log('📮 SMTP Service: Gmail');
+    console.log('✉️  Recipient:', userEmail);
+    console.log('📦 Order Number:', orderDetails?.orderNumber || 'N/A');
+    console.log('💰 Order Amount:', orderDetails?.orderSummary?.grandTotal || orderDetails?.amount || 'N/A');
+    console.log('═══════════════════════════════════════════════════════════════');
+    
     const transporter = createTransporter();
     
     const orderNumber = orderDetails?.orderNumber || '';
@@ -370,8 +379,9 @@ export const sendOrderConfirmationEmail = async (orderDetails, userEmail, logoDa
     try {
       const { filename, buffer } = await generateInvoicePdf(orderDetails);
       attachments.push({ filename, content: buffer, contentType: 'application/pdf' });
+      console.log('✅ Invoice PDF generated successfully');
     } catch (e) {
-      console.error('Failed to generate invoice PDF:', e.message);
+      console.error('❌ Failed to generate invoice PDF:', e.message);
     }
 
     const mailOptions = {
@@ -385,13 +395,13 @@ export const sendOrderConfirmationEmail = async (orderDetails, userEmail, logoDa
       attachments
     };
 
+    console.log('📤 Sending email via SMTP...');
     const result = await transporter.sendMail(mailOptions);
     
-    console.log('Order confirmation email sent successfully:', {
-      messageId: result.messageId,
-      orderNumber,
-      recipient: userEmail
-    });
+    console.log('✅ [SUCCESS] Order confirmation email sent!');
+    console.log('📧 Message ID:', result.messageId);
+    console.log('✉️  Delivered to:', userEmail);
+    console.log('═══════════════════════════════════════════════════════════════');
 
     return {
       success: true,
@@ -401,11 +411,12 @@ export const sendOrderConfirmationEmail = async (orderDetails, userEmail, logoDa
     };
 
   } catch (error) {
-    console.error('Error sending order confirmation email:', {
-      error: error.message,
-      orderNumber: orderDetails.orderNumber,
-      recipient: userEmail
-    });
+    console.error('═══════════════════════════════════════════════════════════════');
+    console.error('❌ [FAILED] Error sending order confirmation email!');
+    console.error('📧 Error:', error.message);
+    console.error('📦 Order Number:', orderDetails.orderNumber);
+    console.error('✉️  Recipient:', userEmail);
+    console.error('═══════════════════════════════════════════════════════════════');
 
     return {
       success: false,
@@ -442,10 +453,20 @@ const buildAdminOrderHeader = (orderDetails = {}) => {
 
 export const sendOrderPlacedAdminNotification = async (orderDetails, adminEmails) => {
   if (!Array.isArray(adminEmails) || adminEmails.length === 0) {
+    console.log('⚠️  No admin emails configured, skipping admin notification');
     return { success: false, skipped: true, reason: 'No admin recipients' };
   }
 
   try {
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('📧 [BACKEND] SENDING ADMIN ORDER NOTIFICATION');
+    console.log('🌐 Backend Service: Vercel/Render (check deployment)');
+    console.log('📮 SMTP Service: Gmail');
+    console.log('👥 Recipients:', adminEmails.join(', '));
+    console.log('📦 Order Number:', orderDetails?.orderNumber || 'N/A');
+    console.log('💰 Order Amount:', orderDetails?.orderSummary?.grandTotal || orderDetails?.amount || 'N/A');
+    console.log('═══════════════════════════════════════════════════════════════');
+    
     const transporter = createTransporter();
     const { orderNumber, orderSummary, cartItems, paymentMethod, orderStatus, createdAt } = orderDetails;
     const customerEmail = orderDetails?.userDetails?.email || orderDetails?.userId?.email || 'Not provided';
@@ -455,8 +476,9 @@ export const sendOrderPlacedAdminNotification = async (orderDetails, adminEmails
     try {
       const { filename, buffer } = await generateInvoicePdf(orderDetails);
       attachments.push({ filename, content: buffer, contentType: 'application/pdf' });
+      console.log('✅ Invoice PDF generated for admin notification');
     } catch (e) {
-      console.error('Failed to generate invoice PDF for admin:', e.message);
+      console.error('❌ Failed to generate invoice PDF for admin:', e.message);
     }
 
     const mailOptions = {
@@ -510,7 +532,13 @@ export const sendOrderPlacedAdminNotification = async (orderDetails, adminEmails
       attachments
     };
 
+    console.log('📤 Sending admin notification email via SMTP...');
     const result = await transporter.sendMail(mailOptions);
+
+    console.log('✅ [SUCCESS] Admin order notification sent!');
+    console.log('📧 Message ID:', result.messageId);
+    console.log('👥 Delivered to:', adminEmails.join(', '));
+    console.log('═══════════════════════════════════════════════════════════════');
 
     return {
       success: true,
@@ -519,10 +547,12 @@ export const sendOrderPlacedAdminNotification = async (orderDetails, adminEmails
       recipients: adminEmails
     };
   } catch (error) {
-    console.error('Error sending admin order placed email:', {
-      error: error.message,
-      orderNumber: orderDetails?.orderNumber
-    });
+    console.error('═══════════════════════════════════════════════════════════════');
+    console.error('❌ [FAILED] Error sending admin order notification!');
+    console.error('📧 Error:', error.message);
+    console.error('📦 Order Number:', orderDetails?.orderNumber);
+    console.error('👥 Recipients:', adminEmails.join(', '));
+    console.error('═══════════════════════════════════════════════════════════════');
 
     return {
       success: false,
