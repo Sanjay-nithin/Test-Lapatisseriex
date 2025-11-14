@@ -733,7 +733,7 @@ export const createOrder = asyncHandler(async (req, res) => {
       try {
         const io = global.io;
         if (io) {
-          io.emit('newOrderPlaced', {
+          const eventData = {
             orderNumber,
             orderData: {
               orderNumber,
@@ -746,8 +746,11 @@ export const createOrder = asyncHandler(async (req, res) => {
               hostelName,
               createdAt: order.createdAt
             }
-          });
+          };
+          io.emit('newOrderPlaced', eventData);
           console.log('✅ WebSocket event "newOrderPlaced" emitted for COD order:', orderNumber);
+          console.log('   Connected clients:', io.engine.clientsCount);
+          console.log('   Event data:', JSON.stringify(eventData));
         } else {
           console.warn('⚠️ WebSocket (io) not available - cannot emit newOrderPlaced event');
         }
@@ -995,7 +998,7 @@ export const verifyPayment = asyncHandler(async (req, res) => {
       try {
         const io = global.io;
         if (io) {
-          io.emit('newOrderPlaced', {
+          const eventData = {
             orderNumber: order.orderNumber,
             orderData: {
               orderNumber: order.orderNumber,
@@ -1008,8 +1011,11 @@ export const verifyPayment = asyncHandler(async (req, res) => {
               hostelName: order.hostelName,
               createdAt: order.createdAt
             }
-          });
-          console.log('✅ WebSocket event "newOrderPlaced" emitted for online order:', order.orderNumber);
+          };
+          io.emit('newOrderPlaced', eventData);
+          console.log('✅ WebSocket event "newOrderPlaced" emitted for Razorpay order:', order.orderNumber);
+          console.log('   Connected clients:', io.engine.clientsCount);
+          console.log('   Event data:', JSON.stringify(eventData));
         } else {
           console.warn('⚠️ WebSocket (io) not available - cannot emit newOrderPlaced event');
         }

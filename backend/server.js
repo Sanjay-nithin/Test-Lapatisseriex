@@ -361,7 +361,7 @@ const startServer = async () => {
     app.use('/api/free-product', freeProductRoutes);
     app.use('/api/donations', donationRoutes);
 
-    // WebSocket setup
+    // WebSocket setup - Optimized for Render deployment
     const io = new Server(server, {
       cors: {
         origin: function (origin, callback) {
@@ -390,7 +390,20 @@ const startServer = async () => {
         methods: ['GET', 'POST'],
         credentials: true
       },
-      transports: ['websocket', 'polling']
+      // Render works best with polling first, then upgrade
+      transports: ['polling', 'websocket'],
+      // Increase timeouts for Render's network
+      pingTimeout: 60000,
+      pingInterval: 25000,
+      // Allow upgrades for better performance once connected
+      allowUpgrades: true,
+      // Max HTTP buffer size for large payloads
+      maxHttpBufferSize: 1e6,
+      // Connection state recovery for reconnections
+      connectionStateRecovery: {
+        maxDisconnectionDuration: 2 * 60 * 1000,
+        skipMiddlewares: true,
+      }
     });
 
     // Store connected users
@@ -398,6 +411,8 @@ const startServer = async () => {
 
     io.on('connection', (socket) => {
       console.log('✅ WebSocket client connected:', socket.id);
+      console.log('   Transport:', socket.conn.transport.name);
+      console.log('   Total clients:', io.engine.clientsCount);
 
       // Handle user authentication
       socket.on('authenticate', (userId) => {
@@ -424,14 +439,17 @@ const startServer = async () => {
         }
       });
 
-      socket.on('disconnect', () => {
+      socket.on('disconnect', (reason) => {
+        console.log(`❌ Client ${socket.id} disconnected. Reason: ${reason}`);
         if (socket.userId) {
           connectedUsers.delete(socket.userId);
-          console.log(`❌ User ${socket.userId} disconnected`);
+          console.log(`   User ${socket.userId} removed from connected users`);
           socket.userId = null;
-        } else {
-          console.log(`❌ Client ${socket.id} disconnected`);
         }
+      });
+
+      socket.on('error', (error) => {
+        console.error(`⚠️ Socket error for ${socket.id}:`, error.message);
       });
     });
 
@@ -440,6 +458,15 @@ const startServer = async () => {
     global.connectedUsers = connectedUsers;
     
     console.log('✅ WebSocket server initialized and ready');
+    
+    // Periodic status report for debugging
+    setInterval(() => {
+      const clientCount = io.engine.clientsCount;
+      if (clientCount > 0) {
+        console.log(`📊 WebSocket Status: ${clientCount} client(s) connected`);
+        console.log(`   Connected user IDs: ${Array.from(connectedUsers.keys()).join(', ') || 'None'}`);
+      }
+    }, 60000); // Every minute
 
     // Periodically broadcast shop status so clients update without refresh
     let lastShopStatusSnapshot = null;
@@ -503,6 +530,50 @@ const startServer = async () => {
     // Root route
     app.get('/', (req, res) => {
       res.send('La Patisserie API is running...');
+    });
+
+    // WebSocket test endpoint - trigger a test event to verify WebSocket is working
+    app.post('/api/test-websocket', (req, res) => {
+      try {
+        const testEventData = {
+          orderNumber: 'TEST-' + Date.now(),
+          orderData: {
+            orderNumber: 'TEST-' + Date.now(),
+            userId: 'test-user',
+            amount: 100,
+            paymentMethod: 'test',
+            orderStatus: 'placed',
+            paymentStatus: 'test',
+            deliveryLocation: 'Test Location',
+            hostelName: 'Test Hostel',
+            createdAt: new Date()
+          }
+        };
+
+        console.log('%c🧪 TEST WEBSOCKET EVENT TRIGGERED', 'color: yellow; font-weight: bold');
+        console.log('   Event: newOrderPlaced');
+        console.log('   Data:', testEventData);
+        console.log('   Connected clients:', io.engine.clientsCount);
+        console.log('   Emitting to all clients...');
+        
+        io.emit('newOrderPlaced', testEventData);
+        
+        console.log('   ✅ Test event emitted successfully');
+
+        res.json({
+          success: true,
+          message: 'Test WebSocket event emitted',
+          connectedClients: io.engine.clientsCount,
+          eventData: testEventData
+        });
+      } catch (error) {
+        console.error('❌ Error emitting test WebSocket event:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Failed to emit test event',
+          error: error.message
+        });
+      }
     });
 
     // 404 handler - must come after all routes

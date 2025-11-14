@@ -41,6 +41,7 @@ class WebSocketService {
   // This ensures we do NOT accidentally connect to the Vercel deployment which may not support persistent WS.
   const serverUrl = getWebSocketBaseUrl();
   console.log('[WebSocketService] Derived WebSocket base:', serverUrl);
+  console.log('[WebSocketService] Attempting connection at:', new Date().toISOString());
 
     this.socket = io(serverUrl, getSocketOptions());
 
@@ -49,24 +50,47 @@ class WebSocketService {
     }
 
     this.socket.on('connect', () => {
-      console.log('Connected to WebSocket server');
+      console.log('✅ [WebSocketService] Connected to WebSocket server');
+      console.log('   Socket ID:', this.socket.id);
+      console.log('   Transport:', this.socket.io.engine.transport.name);
       this.connected = true;
 
       if (this.userId) {
         this.socket.emit('authenticate', this.userId);
         this.currentAuthId = this.userId;
+        console.log('   Authenticated user:', this.userId);
       }
     });
 
     this.socket.on('disconnect', (reason) => {
-      console.log('Disconnected from WebSocket server. Reason:', reason);
+      console.log('❌ [WebSocketService] Disconnected from WebSocket server');
+      console.log('   Reason:', reason);
+      console.log('   Time:', new Date().toISOString());
       this.connected = false;
       this.currentAuthId = null;
     });
 
     this.socket.on('connect_error', (error) => {
-      console.error('[WebSocketService] connection error:', error?.message || error);
+      console.error('⚠️ [WebSocketService] Connection error:', error?.message || error);
+      console.error('   Error type:', error?.type);
+      console.error('   Description:', error?.description);
       this.connected = false;
+    });
+
+    this.socket.io.on('reconnect_attempt', (attempt) => {
+      console.log(`🔄 [WebSocketService] Reconnection attempt #${attempt}`);
+    });
+
+    this.socket.io.on('reconnect', (attempt) => {
+      console.log(`✅ [WebSocketService] Reconnected after ${attempt} attempts`);
+    });
+
+    this.socket.io.on('reconnect_error', (error) => {
+      console.error('⚠️ [WebSocketService] Reconnection error:', error?.message);
+    });
+
+    this.socket.io.on('reconnect_failed', () => {
+      console.error('❌ [WebSocketService] Reconnection failed - max attempts reached');
     });
 
     return this.socket;

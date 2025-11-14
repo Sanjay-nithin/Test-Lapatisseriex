@@ -1,6 +1,17 @@
 # La Patisserie
 
-Delicious pastries, cakes, and treats — ordered in a few taps and delivered with care.
+Delicious pastries, cakes, and treats — ordered in a few t## For the La Patisserie team
+
+If you're looking for logo/static asset info used in emails and on the site, see `backend/public/README.md`.
+
+### WebSocket / Real-time Updates
+
+The admin dashboard uses WebSocket connections to receive real-time order notifications. If WebSocket connections are not working in production:
+
+- **Quick Fix**: See [WEBSOCKET_QUICK_FIX.md](./WEBSOCKET_QUICK_FIX.md) for immediate troubleshooting
+- **Detailed Guide**: See [WEBSOCKET_DEPLOYMENT_GUIDE.md](./WEBSOCKET_DEPLOYMENT_GUIDE.md) for complete setup and troubleshooting
+
+These guides cover Render-specific configuration, environment variables, and common issues. and delivered with care.
 
 Last updated: November 12, 2025
 

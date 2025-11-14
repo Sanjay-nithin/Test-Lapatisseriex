@@ -24,7 +24,8 @@ export function getWebSocketBaseUrl() {
 export function getSocketOptions(overrides = {}) {
   return {
     path: '/socket.io/',
-    transports: ['websocket', 'polling'], // allow fallback for free-tier proxies
+    // Start with polling for better Render compatibility, then upgrade
+    transports: ['polling', 'websocket'],
     upgrade: true,
     rememberUpgrade: true,
     reconnection: true,
@@ -32,7 +33,13 @@ export function getSocketOptions(overrides = {}) {
     reconnectionDelay: 1500,
     reconnectionDelayMax: 10000,
     randomizationFactor: 0.5,
-    timeout: 20000,
+    // Increase timeout for Render's network latency
+    timeout: 30000,
+    // Force new connection (helps with Render's architecture)
+    forceNew: false,
+    // Additional options for stability
+    autoConnect: true,
+    withCredentials: true,
     ...overrides
   };
 }

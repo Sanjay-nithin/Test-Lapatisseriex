@@ -324,14 +324,25 @@ const AdminOrders = () => {
     console.log('%c🔌 WebSocket Connection Attempt', 'color: #733857; font-weight: bold; font-size: 14px');
     console.log('📍 Cleaned URL for WebSocket:', apiUrl);
     console.log('⏰ Time:', new Date().toLocaleTimeString());
+    console.log('🔧 Environment:', import.meta.env.MODE);
+    console.log('🌐 VITE_API_URL:', import.meta.env.VITE_API_URL);
+    console.log('🌐 VITE_WS_URL:', import.meta.env.VITE_WS_URL || 'Not set (will derive from API_URL)');
     
-    const socket = io(apiUrl, getSocketOptions({ autoConnect: true }));
+    const socketOptions = getSocketOptions({ autoConnect: true });
+    console.log('⚙️ Socket Options:', socketOptions);
+    
+    const socket = io(apiUrl, socketOptions);
+    console.log('🔌 Socket.IO instance created:', socket);
     
     socket.on('connect', () => {
       console.log('%c✅ WebSocket CONNECTED!', 'color: green; font-weight: bold; font-size: 14px');
       console.log('🆔 Socket ID:', socket.id);
       console.log('🔌 Transport:', socket.io.engine.transport.name);
       console.log('⏰ Connected at:', new Date().toLocaleTimeString());
+      console.log('🌍 Socket connected status:', socket.connected);
+      console.log('📡 Socket URL:', socket.io.uri);
+      console.log('🔄 Socket reconnecting:', socket.io.reconnecting);
+      console.log('🎯 Registering listener for "newOrderPlaced" event...');
       setWsConnected(true);
       setWsSocketId(socket.id);
       toast.success('WebSocket connected - Ready for live updates!', {
@@ -388,24 +399,36 @@ const AdminOrders = () => {
     });
     
     // Listen for new order events
+    console.log('🎧 Setting up "newOrderPlaced" event listener...');
     socket.on('newOrderPlaced', (data) => {
-      console.log('%c🎉 NEW ORDER EVENT RECEIVED!', 'color: green; font-weight: bold; font-size: 16px; background: #e6ffe6; padding: 5px');
+      console.log('%c🎉 NEW ORDER EVENT RECEIVED IN ADMIN ORDERS!', 'color: green; font-weight: bold; font-size: 16px; background: #e6ffe6; padding: 5px');
+      console.log('⏰ Timestamp:', new Date().toISOString());
       console.log('📦 Order Number:', data.orderNumber);
       console.log('💰 Amount:', data.orderData?.amount);
       console.log('💳 Payment Method:', data.orderData?.paymentMethod);
       console.log('📍 Location:', data.orderData?.deliveryLocation);
       console.log('🏨 Hostel:', data.orderData?.hostelName);
-      console.log('⏰ Received at:', new Date().toLocaleTimeString());
-      console.log('📋 Full Data:', data);
+      console.log('⏰ Order Created at:', data.orderData?.createdAt);
+      console.log('📋 Full Event Data:', JSON.stringify(data, null, 2));
+      console.log('� Socket still connected:', socket.connected);
+      console.log('🆔 Current Socket ID:', socket.id);
       
+      console.log('🎬 Executing UI updates...');
       setShowNewOrderBanner(true);
-      setNewOrderCount(prev => prev + 1);
+      setNewOrderCount(prev => {
+        const newCount = prev + 1;
+        console.log('📊 New order count updated:', prev, '→', newCount);
+        return newCount;
+      });
       
       // Show toast notification
+      console.log('🍞 Showing toast notification...');
       toast.success(`New order #${data.orderNumber} received!`, {
         duration: 4000,
         icon: '🎉'});
+      console.log('✅ Admin order notification handling completed!');
     });
+    console.log('✅ "newOrderPlaced" listener registered successfully');
 
     // Listen for order status updates
     socket.on('orderStatusUpdated', (data) => {
@@ -439,14 +462,35 @@ const AdminOrders = () => {
         icon: '✅'});
     });
 
-    // Test event listener (for debugging)
+    // Test event listener (for debugging) - CATCH ALL EVENTS
+    console.log('🎧 Setting up catch-all event listener for debugging...');
     socket.onAny((eventName, ...args) => {
-      console.log(`📡 Event received: ${eventName}`, args);
+      console.log('%c📡 [CATCH-ALL] Event received on AdminOrders socket', 'color: purple; font-weight: bold; background: #f0e6ff; padding: 3px');
+      console.log('   Event Name:', eventName);
+      console.log('   Event Args:', args);
+      console.log('   Time:', new Date().toLocaleTimeString());
+      
+      // Special highlight for newOrderPlaced
+      if (eventName === 'newOrderPlaced') {
+        console.log('%c⭐ THIS IS THE newOrderPlaced EVENT!', 'color: red; font-size: 14px; font-weight: bold');
+      }
     });
+    console.log('✅ Catch-all listener registered');
+
+    // Periodic connection status check
+    console.log('⏰ Setting up periodic connection status checker...');
+    const statusCheckInterval = setInterval(() => {
+      console.log('%c🔍 WebSocket Status Check', 'color: #888; font-size: 11px');
+      console.log('   Connected:', socket.connected);
+      console.log('   Socket ID:', socket.id || 'N/A');
+      console.log('   Transport:', socket.connected ? socket.io.engine.transport.name : 'N/A');
+      console.log('   Listeners for "newOrderPlaced":', socket.listeners('newOrderPlaced').length);
+    }, 30000); // Check every 30 seconds
 
     // Cleanup on unmount
     return () => {
       console.log('%c🔌 Cleaning up WebSocket connection', 'color: gray; font-size: 12px');
+      clearInterval(statusCheckInterval);
       socket.offAny();
       socket.off('newOrderPlaced');
       socket.off('orderStatusUpdated');
@@ -458,6 +502,7 @@ const AdminOrders = () => {
       socket.off('reconnect_error');
       socket.off('reconnect_failed');
       socket.disconnect();
+      console.log('✅ WebSocket cleanup completed');
     };
   }, []);
 
