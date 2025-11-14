@@ -177,14 +177,15 @@ export const useCart = () => {
         return total + (item.quantity || 0);
       }, 0);
       
-      console.log('🛒 Cart Count Calculation:', {
-        actualCount,
-        backendCount: backendCartCount,
-        cartItems: cartItems.map(item => ({ 
-          name: item?.name || 'Unknown', 
-          quantity: item?.quantity || 0 
-        }))
-      });
+      // Removed debug logging to reduce console noise
+      // console.log('🛒 Cart Count Calculation:', {
+      //   actualCount,
+      //   backendCount: backendCartCount,
+      //   cartItems: cartItems.map(item => ({ 
+      //     name: item?.name || 'Unknown', 
+      //     quantity: item?.quantity || 0 
+      //   }))
+      // });
       
       return actualCount;
     } catch (error) {
@@ -298,20 +299,10 @@ export const useCart = () => {
   }, [cartItems, user, saveToLocalStorage]);
 
   // Optional: refetch cart when tab regains focus to stay in sync across devices
-  // Throttled to prevent excessive calls
   useEffect(() => {
     if (!user) return;
-    let lastFetchTime = 0;
-    const THROTTLE_MS = 5000; // Only refetch if 5 seconds have passed since last fetch
-    
     const onFocus = () => {
-      const now = Date.now();
-      if (now - lastFetchTime < THROTTLE_MS) {
-        console.log('🛒 Skipping cart refetch - too soon since last fetch');
-        return;
-      }
       try {
-        lastFetchTime = now;
         dispatch(fetchCart());
       } catch {}
     };
@@ -549,9 +540,16 @@ export const useCart = () => {
     }
   }, [user, dispatch]);
 
-  const refreshCart = useCallback(async () => {
+  const refreshCart = useCallback(async (force = false) => {
     try {
       if (user) {
+        // Check if there are pending operations and we're not forcing
+        const hasPendingOps = Object.keys(pendingOperations).length > 0;
+        if (!force && hasPendingOps) {
+          console.log('🔄 Skipping cart refresh due to pending operations:', Object.keys(pendingOperations));
+          return;
+        }
+        
         console.log('🔄 Refreshing cart from database');
         const result = await dispatch(fetchCart()).unwrap();
         console.log('✅ Cart refreshed, items:', result?.items?.length);
@@ -562,15 +560,14 @@ export const useCart = () => {
       console.error('❌ Error refreshing cart:', error);
       throw error;
     }
-  }, [user, dispatch]);
+  }, [user, dispatch, pendingOperations]);
 
   const clearCartError = useCallback(() => {
     dispatch(clearError());
   }, [dispatch]);
 
   // Computed values
-  // Don't mark cart as empty if it's loading - prevents "no products" error during fetch
-  const isEmpty = !isLoading && cartItems.length === 0;
+  const isEmpty = cartItems.length === 0;
   const hasItems = cartItems.length > 0;
   
   const cartSummary = useMemo(() => ({

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, createContext, useContext } from 'react';
+﻿import React, { useState, useEffect, createContext, useContext } from 'react';
 import { Link, Outlet, useLocation as useRouterLocation } from 'react-router-dom';
 import {
   FaHome,
@@ -14,10 +14,11 @@ import {
   FaChevronRight,
   FaClock,
   FaBox,
-  FaChartBar,
   FaEnvelope,
   FaTruck,
-  FaBell
+  FaBell,
+  FaGift,
+  FaGraduationCap
 } from 'react-icons/fa';
 import { MdPayment } from 'react-icons/md';
 
@@ -40,8 +41,7 @@ export const useSidebar = () => {
       isSidebarOpen: false,
       isMobile,
       toggleSidebar: () => {},
-      closeSidebarIfOpen: () => {},
-    };
+      closeSidebarIfOpen: () => {}};
   }
   return context;
 };
@@ -61,10 +61,31 @@ const AdminDashboardLayout = () => {
       } else {
         setIsSidebarOpen(true);
       }
+
+      // If a modal is open and viewport is below collapse threshold, ensure sidebar is closed
+      const WIDTH_THRESHOLD = 1191;
+      const HEIGHT_THRESHOLD = 876;
+      const modalOpen = document.querySelector('[data-modal]');
+      if (modalOpen && (window.innerWidth < WIDTH_THRESHOLD || window.innerHeight < HEIGHT_THRESHOLD)) {
+        setSidebarOpen(false);
+      }
     };
 
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    const forceCloseListener = () => {
+      // Conditionally close only if viewport below threshold (or mobile)
+      const WIDTH_THRESHOLD = 1191;
+      const HEIGHT_THRESHOLD = 876;
+      if (window.innerWidth < WIDTH_THRESHOLD || window.innerHeight < HEIGHT_THRESHOLD || window.innerWidth < 768) {
+        setSidebarOpen(false);
+      }
+    };
+
+    window.addEventListener('adminForceSidebarClose', forceCloseListener);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('adminForceSidebarClose', forceCloseListener);
+    };
   }, []);
 
   // Helper to set sidebar open state and broadcast changes
@@ -129,8 +150,7 @@ const AdminDashboardLayout = () => {
             isMobile
               ? {
                   top: 'var(--admin-mobile-header-offset)',
-                  height: 'calc(100vh - var(--admin-mobile-header-offset))',
-                }
+                  height: 'calc(100vh - var(--admin-mobile-header-offset))'}
               : undefined
           }
         >
@@ -169,16 +189,6 @@ const AdminDashboardLayout = () => {
                 >
                   <FaTachometerAlt className="mr-3 flex-shrink-0" />
                   <span className={!isSidebarOpen ? 'hidden' : ''}>Dashboard</span>
-                </Link>
-              </li>
-              <li>
-                <Link
-                  to="/admin/analytics"
-                  onClick={closeSidebarIfOpen}
-                  className={`flex items-center py-3 px-4 font-medium ${location.pathname === '/admin/analytics' ? 'bg-rose-700 text-white' : 'hover:bg-rose-700'}`}
-                >
-                  <FaChartBar className="mr-3 flex-shrink-0" />
-                  <span className={!isSidebarOpen ? 'hidden' : ''}>Analytics</span>
                 </Link>
               </li>
               <li>
@@ -294,12 +304,22 @@ const AdminDashboardLayout = () => {
               </li>
               <li>
                 <Link
-                  to="/admin/ngo-media"
+                  to="/admin/rewards"
                   onClick={closeSidebarIfOpen}
-                  className={`flex items-center py-3 px-4 font-medium ${location.pathname === '/admin/ngo-media' ? 'bg-rose-700 text-white' : 'hover:bg-rose-700'}`}
+                  className={`flex items-center py-3 px-4 font-medium ${location.pathname === '/admin/rewards' ? 'bg-rose-700 text-white' : 'hover:bg-rose-700'}`}
                 >
-                  <FaEnvelope className="mr-3 flex-shrink-0" />
-                  <span className={!isSidebarOpen ? 'hidden' : ''}>NGO Media</span>
+                  <FaGift className="mr-3 flex-shrink-0" />
+                  <span className={!isSidebarOpen ? 'hidden' : ''}>Free Product Rewards</span>
+                </Link>
+              </li>
+              <li>
+                <Link
+                  to="/admin/donations"
+                  onClick={closeSidebarIfOpen}
+                  className={`flex items-center py-3 px-4 font-medium ${location.pathname === '/admin/donations' ? 'bg-rose-700 text-white' : 'hover:bg-rose-700'}`}
+                >
+                  <FaGraduationCap className="mr-3 flex-shrink-0" />
+                  <span className={!isSidebarOpen ? 'hidden' : ''}>Donations</span>
                 </Link>
               </li>
             </ul>
@@ -364,8 +384,7 @@ const AdminDashboardLayout = () => {
             // Padding equals header height + tiny content gap (see index.css variables)
             style={{
               paddingTop: isMobile ? 'var(--admin-mobile-header-offset)' : undefined,
-              paddingBottom: isMobile ? 'var(--admin-mobile-bottom-gap)' : undefined,
-            }}
+              paddingBottom: isMobile ? 'var(--admin-mobile-bottom-gap)' : undefined}}
           >
             <div className="admin-content-root">
               <Outlet />

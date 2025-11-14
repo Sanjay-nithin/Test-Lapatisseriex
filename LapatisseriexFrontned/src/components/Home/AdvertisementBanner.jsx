@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 const AdvertisementBanner = () => {
   const [currentSlide, setCurrentSlide] = useState(0);
@@ -7,9 +7,9 @@ const AdvertisementBanner = () => {
   const [currentX, setCurrentX] = useState(0);
   const [isAutoPlaying, setIsAutoPlaying] = useState(true);
   const advertisements = [
-    { id: 1, type: 'image', src: '/jk.png' },
-    { id: 2, type: 'image', src: '/images/Brown.png' },
-    { id: 3, type: 'image', src: '/images/Yellow and Brown Organic Abstract Food YouTube Thumbnail.png' },
+    { id: 1, type: 'video', src: '/Black and Yellow Modern Pizza Sale Video(2).mp4' },
+    { id: 2, type: 'image', src: '/Brown Gradient Elegant Coffee Shop Banner(3).png' },
+    { id: 3, type: 'image', src: '/Orange Modern New Restaurant Coming Soon Banner Landscape(3).png' },
   ];
   const intervalRef = useRef(null);
 
@@ -89,17 +89,16 @@ const AdvertisementBanner = () => {
         className="flex transition-transform duration-700 ease-in-out"
         style={{
           transform: `translateX(-${currentSlide * 100}%)`,
-          cursor: isDragging ? 'grabbing' : 'grab',
-        }}
+          cursor: isDragging ? 'grabbing' : 'grab'}}
       >
         {advertisements.map((ad, index) => (
           <div key={ad.id} className="w-full flex-shrink-0 relative">
-            <div className="w-full h-64 sm:h-80 md:h-96 lg:h-[450px] xl:h-[500px] overflow-hidden">
+            <div className="w-full aspect-[16/9] sm:aspect-[21/9] overflow-hidden">
               {ad.type === 'image' ? (
                 <img
                   src={ad.src}
                   alt={`Advertisement ${index + 1}`}
-                  className="w-full h-full object-cover object-center transition-transform duration-700 hover:scale-105"
+                  className="w-full h-full object-cover transition-transform duration-700"
                   draggable={false}
                   onError={(e) => {
                     e.target.src = '/placeholder-image.jpg';
@@ -108,7 +107,7 @@ const AdvertisementBanner = () => {
               ) : (
                 <video
                   src={ad.src}
-                  className="w-full h-full object-cover object-center"
+                  className="w-full h-full object-cover"
                   autoPlay
                   muted
                   loop
@@ -122,18 +121,7 @@ const AdvertisementBanner = () => {
       </div>
 
       {/* Dots Indicator */}
-      <div className="absolute bottom-3 left-1/2 transform -translate-x-1/2 flex space-x-2 z-10">
-        {advertisements.map((_, index) => (
-          <button
-            key={index}
-            onClick={() => setCurrentSlide(index)}
-            className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
-              index === currentSlide ? 'bg-[#733857] scale-125' : 'bg-gray-300 hover:bg-gray-400'
-            }`}
-            aria-label={`Go to slide ${index + 1}`}
-          />
-        ))}
-      </div>
+   
 
       {/* Smooth animation styles */}
       <style>{`

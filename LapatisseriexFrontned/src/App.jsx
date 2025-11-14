@@ -17,6 +17,8 @@ import { initializeServiceWorker } from './utils/serviceWorker';
 import Layout from './components/Layout/Layout';
 import AdminLayout from './components/Layout/AdminLayout';
 import FooterOnlyLayout from './components/Layout/FooterOnlyLayout';
+import ProductLayout from './components/Layout/ProductLayout';
+import PhoneVerificationTest from './pages/PhoneVerificationTest';
 
 // Pages
 import ProfilePage from './pages/Profile';
@@ -32,7 +34,6 @@ import RefundPolicy from './pages/RefundPolicy';
 import ShippingPolicy from './pages/ShippingPolicy';
 import TermsAndConditions from './pages/TermsAndConditions';
 import FAQ from './pages/FAQ';
-import NGODonationPage from './pages/NGODonationPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 // Error Boundary for Product Pages
@@ -57,10 +58,10 @@ import AdminTimeSettings from './components/Admin/AdminTimeSettings';
 import AdminOrders from './components/Admin/AdminOrders';
 import AdminOrderTracking from './components/Admin/AdminOrderTracking';
 import AdminPayments from './components/Admin/AdminPayments';
-import AdminAnalyticsDashboard from './pages/Admin/AdminAnalyticsDashboard';
 import AdminNewsletter from './components/Admin/AdminNewsletter';
-import AdminNGOMedia from './components/Admin/AdminNGOMedia';
 import AdminNotifications from './components/Admin/AdminNotifications';
+import AdminFreeProductRewards from './components/Admin/AdminFreeProductRewards';
+import AdminDonations from './components/Admin/AdminDonations';
 
 // Contact Components
 import Contact from './pages/Contact';
@@ -150,6 +151,7 @@ function App() {
     <ReduxProvider>
       <AuthInitializer />
       <WebSocketInitializer />
+      
         <ShopStatusProvider>
           <LocationProvider>
             <HostelProvider>
@@ -189,14 +191,9 @@ function App() {
                             <Route path="shipping-policy" element={<ShippingPolicy />} />
                             <Route path="refund-policy" element={<RefundPolicy />} />
                             <Route path="terms" element={<TermsAndConditions />} />
+                            <Route path="phone-verification-test" element={<PhoneVerificationTest />} />
                             <Route path="faq" element={<FAQ />} />
                             <Route path="our-services" element={<OurServices />} />
-                            <Route path="support-education" element={<NGODonationPage />} />
-                            <Route path="product/:productId" element={
-                              <ProductErrorBoundary>
-                                <ProductDisplayPage />
-                              </ProductErrorBoundary>
-                            } />
                             <Route path="cart" element={<Cart />} />
                             <Route path="checkout" element={
                               <PrivateRoute>
@@ -204,8 +201,15 @@ function App() {
                               </PrivateRoute>
                             } />
                             <Route path="favorites" element={<Favorites />} />
-                            {/* Demo Analytics Dashboard - Public Route */}
-                            
+                          </Route>
+
+                          {/* Product Display with Product Layout (no header) */}
+                          <Route path="product/:productId" element={<ProductLayout />}>
+                            <Route index element={
+                              <ProductErrorBoundary>
+                                <ProductDisplayPage />
+                              </ProductErrorBoundary>
+                            } />
                           </Route>
                           {/* Payment with Footer Only Layout */}
                           <Route path="/" element={<FooterOnlyLayout />}>
@@ -245,7 +249,6 @@ function App() {
                             <Route element={<AdminDashboardLayout />}>
                               <Route index element={<Navigate to="dashboard" />} />
                               <Route path="dashboard" element={<AdminDashboard />} />
-                              <Route path="analytics" element={<AdminAnalyticsDashboard />} />
                               <Route path="notifications" element={<React.Suspense fallback={<div>Loading...</div>}><AdminNotifications /></React.Suspense>} />
                               <Route path="users" element={<AdminUsers />} />
                               <Route path="locations" element={<AdminLocations />} />
@@ -259,7 +262,8 @@ function App() {
                               <Route path="time-settings" element={<React.Suspense fallback={<div>Loading...</div>}><AdminTimeSettings /></React.Suspense>} />
                               <Route path="contacts" element={<React.Suspense fallback={<div>Loading...</div>}><ContactManagement /></React.Suspense>} />
                               <Route path="newsletter" element={<React.Suspense fallback={<div>Loading...</div>}><AdminNewsletter /></React.Suspense>} />
-                              <Route path="ngo-media" element={<React.Suspense fallback={<div>Loading...</div>}><AdminNGOMedia /></React.Suspense>} />
+                              <Route path="rewards" element={<React.Suspense fallback={<div>Loading...</div>}><AdminFreeProductRewards /></React.Suspense>} />
+                              <Route path="donations" element={<React.Suspense fallback={<div>Loading...</div>}><AdminDonations /></React.Suspense>} />
                             </Route>
                           </Route>
                           {/* Catch-all route for any undefined paths */}

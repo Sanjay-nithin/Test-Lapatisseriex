@@ -1,7 +1,6 @@
-import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import { initializeApp } from 'firebase/app';
+﻿import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { 
-  getAuth, 
+  // getAuth removed; we use shared auth instance
   signOut,
   GoogleAuthProvider,
   signInWithPopup,
@@ -12,20 +11,9 @@ import {
 } from 'firebase/auth';
 import axios from 'axios';
 import api from '../services/apiService';
+import { auth } from '../config/firebase';
 
-// Firebase configuration from environment variables
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID
-};
-
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
+// Use shared Firebase Auth instance from config to avoid duplicate initialization
 
 // Backend API URL from environment variable
 const API_URL = import.meta.env.VITE_API_URL;
@@ -68,8 +56,7 @@ export const initializeAuthListener = createAsyncThunk(
                 name: firebaseUser.displayName,
                 profilePhoto: { url: firebaseUser.photoURL || '', public_id: '' },
                 // Backend authoritative data
-                ...verifyResp.data.user,
-              };
+                ...verifyResp.data.user};
               // Persist rich user immediately to minimize UI flicker
               localStorage.setItem('cachedUser', JSON.stringify(backendUser));
 
@@ -88,8 +75,7 @@ export const initializeAuthListener = createAsyncThunk(
                 uid: firebaseUser.uid,
                 email: firebaseUser.email,
                 name: firebaseUser.displayName,
-                profilePhoto: { url: firebaseUser.photoURL || '', public_id: '' },
-              };
+                profilePhoto: { url: firebaseUser.photoURL || '', public_id: '' }};
               dispatch({
                 type: 'auth/setUser',
                 payload: {
@@ -150,8 +136,7 @@ export const signInWithGoogle = createAsyncThunk(
             uid: user.uid,
             email: user.email,
             name: user.displayName,
-            profilePhoto: { url: user.photoURL || '', public_id: '' },
-          },
+            profilePhoto: { url: user.photoURL || '', public_id: '' }},
           token: idToken,
           isAuthenticated: true
         }
@@ -182,8 +167,7 @@ export const signInWithGoogle = createAsyncThunk(
         country: response.data.user.country || 'India',
         gender: response.data.user.gender || '',
         dob: response.data.user.dob || null,
-        anniversary: response.data.user.anniversary || null,
-      };
+        anniversary: response.data.user.anniversary || null};
       
       // Note: User data now cached via redux-persist, not manual localStorage
       
@@ -285,8 +269,7 @@ export const verifySignupOTP = createAsyncThunk(
         country: response.data.user.country || 'India',
         gender: response.data.user.gender || '',
         dob: response.data.user.dob || null,
-        anniversary: response.data.user.anniversary || null,
-      };
+        anniversary: response.data.user.anniversary || null};
       
       return {
         user: userData,
@@ -347,8 +330,7 @@ export const signUpWithEmail = createAsyncThunk(
         country: response.data.user.country || 'India',
         gender: response.data.user.gender || '',
         dob: response.data.user.dob || null,
-        anniversary: response.data.user.anniversary || null,
-      };
+        anniversary: response.data.user.anniversary || null};
       
       // Note: User data now cached via redux-persist, not manual localStorage
       
@@ -407,8 +389,7 @@ export const signInWithEmail = createAsyncThunk(
             uid: user.uid,
             email: user.email,
             name: user.displayName,
-            profilePhoto: { url: user.photoURL || '', public_id: '' },
-          },
+            profilePhoto: { url: user.photoURL || '', public_id: '' }},
           token: idToken,
           isAuthenticated: true
         }
@@ -434,8 +415,7 @@ export const signInWithEmail = createAsyncThunk(
         country: response.data.user.country || 'India',
         gender: response.data.user.gender || '',
         dob: response.data.user.dob || null,
-        anniversary: response.data.user.anniversary || null,
-      };
+        anniversary: response.data.user.anniversary || null};
       
       // Note: User data now cached via redux-persist, not manual localStorage
       
@@ -451,9 +431,11 @@ export const signInWithEmail = createAsyncThunk(
       let errorMessage = 'Failed to sign in with email';
       
       if (error.code === 'auth/user-not-found') {
-        errorMessage = 'No account found with this email address. Please check your email or sign up for a new account.';
+        errorMessage = 'Email not found! This email address is not registered. Please sign up to create a new account.';
+        // Store the email to pre-fill signup form
+        localStorage.setItem('pendingSignupEmail', email);
       } else if (error.code === 'auth/wrong-password') {
-        errorMessage = 'Password is wrong. Please enter the correct password or reset your password.';
+        errorMessage = 'Incorrect password. Please enter the correct password or reset your password if you forgot it.';
       } else if (error.code === 'auth/invalid-email') {
         errorMessage = 'Invalid email address. Please enter a valid email.';
       } else if (error.code === 'auth/user-disabled') {
@@ -463,7 +445,7 @@ export const signInWithEmail = createAsyncThunk(
       } else if (error.code === 'auth/network-request-failed') {
         errorMessage = 'Network error. Please check your internet connection and try again.';
       } else if (error.code === 'auth/invalid-credential') {
-        errorMessage = 'Password is wrong or email does not exist. Please check your credentials and try again.';
+        errorMessage = 'Invalid email or password. Please check your credentials and try again.';
       } else if (error.message) {
         errorMessage = error.message;
       }
@@ -500,8 +482,7 @@ export const getCurrentUser = createAsyncThunk(
           // Ensure phone verification fields are included
           phone: response.data.user.phone || '',
           phoneVerified: response.data.user.phoneVerified || false,
-          phoneVerifiedAt: response.data.user.phoneVerifiedAt || null,
-        };
+          phoneVerifiedAt: response.data.user.phoneVerifiedAt || null};
         
         // Note: User data now cached via redux-persist, not manual localStorage
         
@@ -751,8 +732,7 @@ const authSlice = createSlice({
         error: null,
         message: ''
       };
-    },
-  },
+    }},
   extraReducers: (builder) => {
     builder
       // Google Sign In
@@ -990,8 +970,7 @@ const authSlice = createSlice({
         state.signupOtp.loading = false;
         state.signupOtp.error = action.payload;
       });
-  },
-});
+  }});
 
 export const {
   setAuthType,

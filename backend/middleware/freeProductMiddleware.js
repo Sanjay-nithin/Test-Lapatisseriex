@@ -30,6 +30,50 @@ export const trackOrderDay = async (userId) => {
       user.monthlyOrderDays = [];
     }
 
+    // FIRST: Always clean up old month data (regardless of lastRewardMonth)
+    const oldMonthDaysCount = user.monthlyOrderDays.length;
+    user.monthlyOrderDays = user.monthlyOrderDays.filter(
+      orderDay => orderDay.month === currentMonth && orderDay.year === currentYear
+    );
+    
+    const currentMonthDaysCount = user.monthlyOrderDays.length;
+    if (oldMonthDaysCount > currentMonthDaysCount) {
+      console.log(`🧹 Cleaned up old month data for user ${userId}: ${oldMonthDaysCount} → ${currentMonthDaysCount} days`);
+    }
+
+    // SECOND: Check if it's a new month and reset eligibility
+    if (user.lastRewardMonth && user.lastRewardMonth !== currentMonthKey) {
+      // New month detected - reset everything BEFORE processing today's order
+      console.log(`🔄 New month detected for user ${userId} (${user.lastRewardMonth} → ${currentMonthKey}) - Resetting all free product data`);
+      user.freeProductEligible = false;
+      user.selectedFreeProductId = null;
+      user.freeProductUsed = false;
+      user.lastRewardMonth = null; // Clear to allow fresh start
+      
+      console.log(`✅ Reset complete. Current month days: ${user.monthlyOrderDays.length}`);
+    }
+
+    // THIRD: Verify eligibility matches actual day count (fix any inconsistencies)
+    const currentDaysInMonth = user.monthlyOrderDays.filter(
+      orderDay => orderDay.month === currentMonth && orderDay.year === currentYear
+    );
+    const uniqueDaysBeforeToday = new Set(
+      currentDaysInMonth.map(orderDay => {
+        const d = new Date(orderDay.date);
+        return d.getDate();
+      })
+    ).size;
+
+    // If user is marked eligible but doesn't have 10 days, fix it
+    if (user.freeProductEligible && uniqueDaysBeforeToday < 10 && !user.freeProductUsed) {
+      console.log(`⚠️  Fixing eligibility inconsistency for user ${userId}: Only ${uniqueDaysBeforeToday} days but marked eligible`);
+      user.freeProductEligible = false;
+      user.selectedFreeProductId = null;
+      if (user.lastRewardMonth === currentMonthKey && uniqueDaysBeforeToday < 10) {
+        user.lastRewardMonth = null;
+      }
+    }
+
     // Check if user already ordered today
     const alreadyOrderedToday = user.monthlyOrderDays.some(orderDay => {
       const orderDate = new Date(orderDay.date);
@@ -44,9 +88,10 @@ export const trackOrderDay = async (userId) => {
         month: currentMonth,
         year: currentYear
       });
+      console.log(`� Added order day for user ${userId}: ${todayStart.toLocaleDateString()}`);
     }
 
-    // Filter order days for current month
+    // Filter order days for CURRENT MONTH ONLY (should already be clean after reset above)
     const currentMonthOrders = user.monthlyOrderDays.filter(
       orderDay => orderDay.month === currentMonth && orderDay.year === currentYear
     );
@@ -61,45 +106,17 @@ export const trackOrderDay = async (userId) => {
 
     const uniqueDaysCount = uniqueDays.size;
 
-    // Check if it's a new month - if so, reset everything
-    if (user.lastRewardMonth && user.lastRewardMonth !== currentMonthKey) {
-      // New month - reset everything
-      console.log(`🔄 New month detected for user ${userId} - Resetting all free product data`);
-      user.freeProductEligible = false;
-      user.selectedFreeProductId = null;
-      user.freeProductUsed = false;
-      user.lastRewardMonth = null; // Clear to allow fresh start
-      
-      // Clean up old month's order days (keep only current month)
-      user.monthlyOrderDays = user.monthlyOrderDays.filter(
-        orderDay => orderDay.month === currentMonth && orderDay.year === currentYear
-      );
-      
-      // Recalculate unique days after cleaning
-      const cleanedOrders = user.monthlyOrderDays;
-      const cleanedUniqueDays = new Set(
-        cleanedOrders.map(orderDay => {
-          const d = new Date(orderDay.date);
-          return d.getDate();
-        })
-      );
-      const cleanedUniqueDaysCount = cleanedUniqueDays.size;
-      
-      // Check if user is eligible in the new month after reset
-      if (cleanedUniqueDaysCount >= 10) {
-        user.freeProductEligible = true;
-        user.lastRewardMonth = currentMonthKey;
-        console.log(`🎉 User ${userId} eligible in new month with ${cleanedUniqueDaysCount} days!`);
-      }
-    } else {
-      // Same month - check if user has reached 10 unique order days
-      // Allow eligibility EVEN if they already used their free product (for next cycle)
-      if (uniqueDaysCount >= 10 && !user.freeProductEligible) {
-        user.freeProductEligible = true;
-        user.lastRewardMonth = currentMonthKey;
-        user.freeProductUsed = false; // Reset used flag when becoming eligible again
-        console.log(`🎉 User ${userId} is now eligible for a free product! (${uniqueDaysCount} days)`);
-      }
+    // Check if user has reached 10 unique order days in CURRENT MONTH
+    // STRICT: Only allow ONE free product per month
+    if (uniqueDaysCount >= 10 && !user.freeProductEligible && !user.freeProductUsed) {
+      user.freeProductEligible = true;
+      user.lastRewardMonth = currentMonthKey;
+      console.log(`🎉 User ${userId} is now eligible for a free product! (${uniqueDaysCount} days in ${currentMonthKey})`);
+    } else if (user.freeProductUsed) {
+      // User already used their free product this month - not eligible again
+      console.log(`❌ User ${userId} already claimed free product this month (${currentMonthKey}). Wait for next month.`);
+    } else if (uniqueDaysCount < 10) {
+      console.log(`📊 User ${userId} progress: ${uniqueDaysCount}/10 days in ${currentMonthKey}`);
     }
 
     await user.save();
@@ -116,10 +133,10 @@ export const trackOrderDay = async (userId) => {
 
 /**
  * Middleware to check and reset free product status after it's used
- * This marks the free product as used and resets eligibility for next cycle
- * BUT keeps the order days so user can continue accumulating toward next reward
+ * This marks the free product as used and resets eligibility
+ * STRICT: Only ONE free product per month - user must wait until next month
  */
-export const markFreeProductUsed = async (userId) => {
+export const markFreeProductUsed = async (userId, productId, productName, orderNumber) => {
   try {
     if (!userId) {
       return;
@@ -131,14 +148,32 @@ export const markFreeProductUsed = async (userId) => {
     }
 
     if (user.freeProductEligible || user.selectedFreeProductId) {
-      // Reset eligibility flags but KEEP monthlyOrderDays so progress continues
+      const now = new Date();
+      const currentMonth = now.getMonth() + 1;
+      const currentYear = now.getFullYear();
+      const currentMonthKey = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+      
+      // Reset eligibility flags and mark as used for THIS MONTH
       user.freeProductEligible = false;
-      user.freeProductUsed = true;
+      user.freeProductUsed = true; // This prevents getting another free product this month
       user.selectedFreeProductId = null;
-      // DO NOT clear monthlyOrderDays - let them continue accumulating
+      
+      // Record claim history for admin tracking
+      if (!user.freeProductClaimHistory) {
+        user.freeProductClaimHistory = [];
+      }
+      user.freeProductClaimHistory.push({
+        productId: productId,
+        productName: productName,
+        claimedAt: now,
+        month: currentMonthKey,
+        orderNumber: orderNumber
+      });
+      
+      // Keep monthlyOrderDays intact - user can't use them this month, but they roll over
       
       await user.save();
-      console.log(`✅ Free product used by user ${userId} - Eligibility reset, days preserved for next cycle`);
+      console.log(`✅ Free product claimed by user ${userId} - NO MORE free products until next month`);
     }
   } catch (error) {
     console.error('Error in markFreeProductUsed:', error);

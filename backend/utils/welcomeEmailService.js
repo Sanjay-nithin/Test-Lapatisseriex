@@ -1,15 +1,19 @@
 import nodemailer from 'nodemailer';
 import { getWelcomeEmailTemplate } from './welcomeEmailTemplate.js';
 
-// Create simple transporter (same as test email - FAST!)
+// Create reusable transporter with enhanced configuration
 const createTransporter = () => {
   return nodemailer.createTransport({
     service: 'gmail',
     auth: {
       user: process.env.EMAIL_USER || 'lapatisserielapatisserie@gmail.com',
       pass: process.env.EMAIL_PASS
-    }
-    // Removed pooling and rate limiting for instant sending
+    },
+    pool: true, // Use connection pooling
+    maxConnections: 5,
+    maxMessages: 100,
+    rateDelta: 20000, // 20 seconds
+    rateLimit: 5 // max 5 messages per rateDelta
   });
 };
 

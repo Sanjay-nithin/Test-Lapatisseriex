@@ -1,6 +1,6 @@
 import nodemailer from 'nodemailer';
 
-// Create simple transporter (same as test email - FAST!)
+// Create transporter with enhanced configuration
 const createTransporter = () => {
   // Use environment variables for email configuration
   if (process.env.EMAIL_SERVICE === 'gmail') {
@@ -9,8 +9,12 @@ const createTransporter = () => {
       auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS, // Use app password for Gmail
-      }
-      // Removed pooling and rate limiting for instant sending
+      },
+      pool: true, // Use connection pooling
+      maxConnections: 5,
+      maxMessages: 100,
+      rateDelta: 20000, // 20 seconds
+      rateLimit: 5 // max 5 messages per rateDelta
     });
   } else if (process.env.EMAIL_SERVICE === 'smtp') {
     return nodemailer.createTransport({
@@ -20,8 +24,12 @@ const createTransporter = () => {
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
-      }
-      // Removed pooling and rate limiting for instant sending
+      },
+      pool: true, // Use connection pooling
+      maxConnections: 5,
+      maxMessages: 100,
+      rateDelta: 20000, // 20 seconds
+      rateLimit: 5 // max 5 messages per rateDelta
     });
   } else {
     // Fallback to console logging in development

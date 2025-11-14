@@ -1,15 +1,20 @@
 import nodemailer from 'nodemailer';
+import { getEmailDelegateApiBase, isDelegationEnabled, delegateEmailPost } from './emailDelegator.js';
 import crypto from 'crypto';
 
-// Create simple transporter (same as test email - FAST!)
+// Create transporter for sending emails
 const createTransporter = () => {
   return nodemailer.createTransport({
     service: 'gmail',
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS
-    }
-    // Removed pooling and rate limiting for instant sending
+    },
+    pool: true,
+    maxConnections: 5,
+    maxMessages: 100,
+    rateDelta: 20000, // 20 seconds
+    rateLimit: 5 // max 5 messages per rateDelta
   });
 };
 
@@ -127,6 +132,12 @@ const getSignupVerificationEmailTemplate = (otp, userEmail) => {
 // Send password reset OTP email
 export const sendPasswordResetOTP = async (userEmail, otp) => {
   try {
+    const base = getEmailDelegateApiBase();
+    if (isDelegationEnabled() && base) {
+      // Delegate to remote server (e.g., Vercel)
+      const result = await delegateEmailPost('/email-dispatch/password-reset', { userEmail, otp });
+      return { success: true, ...result };
+    }
     const transporter = createTransporter();
     const emailTemplate = getPasswordResetEmailTemplate(otp, userEmail);
     
@@ -163,6 +174,11 @@ export const sendPasswordResetOTP = async (userEmail, otp) => {
 // Send signup verification OTP email
 export const sendSignupVerificationOTP = async (userEmail, otp) => {
   try {
+    const base = getEmailDelegateApiBase();
+    if (isDelegationEnabled() && base) {
+      const result = await delegateEmailPost('/email-dispatch/signup-otp', { userEmail, otp });
+      return { success: true, ...result };
+    }
     const transporter = createTransporter();
     const emailTemplate = getSignupVerificationEmailTemplate(otp, userEmail);
     

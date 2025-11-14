@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { getLoyaltyStatus } from '../../services/loyaltyService';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Gift, Calendar, TrendingUp, Award, Sparkles } from 'lucide-react';
@@ -59,8 +59,21 @@ const LoyaltyProgress = ({ onFreeProductEligible, onSelectFreeProduct }) => {
     return null;
   }
 
-  const { uniqueDaysCount, freeProductEligible, freeProductClaimed, remainingDays } = loyaltyData;
+  const { uniqueDaysCount, freeProductEligible, freeProductClaimed, remainingDays, orderDates } = loyaltyData;
   const progressPercentage = (uniqueDaysCount / 10) * 100;
+
+  // Format order dates for display
+  const formatOrderDates = () => {
+    if (!orderDates || orderDates.length === 0) return [];
+    return orderDates
+      .map(date => new Date(date))
+      .sort((a, b) => b - a) // Sort newest first
+      .map(date => date.toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric',
+        year: 'numeric' 
+      }));
+  };
 
   return (
     <motion.div
@@ -74,8 +87,8 @@ const LoyaltyProgress = ({ onFreeProductEligible, onSelectFreeProduct }) => {
             <Gift className="w-6 h-6 text-white" />
           </div>
           <div>
-            <h3 className="text-xl font-bold text-[#733857]" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>Loyalty Rewards</h3>
-            <p className="text-sm text-gray-600" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>Order more, earn free products!</p>
+            <h3 className="text-xl font-bold text-[#733857]">Loyalty Rewards</h3>
+            <p className="text-sm text-gray-600">Order more, earn free products!</p>
           </div>
         </div>
         {freeProductEligible && !freeProductClaimed && (
@@ -83,7 +96,6 @@ const LoyaltyProgress = ({ onFreeProductEligible, onSelectFreeProduct }) => {
             animate={{ scale: [1, 1.1, 1] }}
             transition={{ repeat: Infinity, duration: 2 }}
             className="bg-gradient-to-r from-green-500 to-emerald-500 text-white px-4 py-2 rounded-full text-sm font-semibold shadow-lg"
-            style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}
           >
             <span className="flex items-center gap-2">
               <Award className="w-4 h-4" />
@@ -126,7 +138,7 @@ const LoyaltyProgress = ({ onFreeProductEligible, onSelectFreeProduct }) => {
                 whileTap={{ scale: 0.98 }}
                 onClick={onSelectFreeProduct}
                 className="w-full bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] text-white py-3 px-6 rounded font-bold hover:opacity-90 transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
-                style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}
+                style={{  }}
               >
                 <Sparkles className="w-5 h-5" />
                 <span>Select Your Free Product Now!</span>
@@ -167,13 +179,17 @@ const LoyaltyProgress = ({ onFreeProductEligible, onSelectFreeProduct }) => {
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   <Calendar className="w-4 h-4 text-[#733857]" />
-                  <span className="text-sm font-semibold text-gray-700" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+                  <span className="text-sm font-semibold text-gray-700">
                     Progress This Month
                   </span>
                 </div>
-                <span className="text-sm font-bold text-[#733857]" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+                <button
+                  onClick={() => setShowDates(!showDates)}
+                  className="text-sm font-bold text-[#733857] hover:text-[#8d4466] transition-colors flex items-center gap-1"
+                >
                   {uniqueDaysCount}/10 days
-                </span>
+                  <span className="text-xs">{showDates ? '▲' : '▼'}</span>
+                </button>
               </div>
               <div className="relative w-full h-4 bg-gray-200 rounded-full overflow-hidden shadow-inner">
                 <motion.div
@@ -185,6 +201,53 @@ const LoyaltyProgress = ({ onFreeProductEligible, onSelectFreeProduct }) => {
                   <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
                 </motion.div>
               </div>
+
+              {/* Show order dates when clicked */}
+              <AnimatePresence>
+                {showDates && uniqueDaysCount > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="mt-3 bg-white/60 rounded-lg p-3 border border-[#733857]/20"
+                  >
+                    <p className="text-xs font-semibold text-[#733857] mb-3">
+                      📅 Your Order Timeline This Month:
+                    </p>
+                    <div className="space-y-2">
+                      {formatOrderDates().map((date, index) => (
+                        <motion.div
+                          key={index}
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: index * 0.1 }}
+                          className="flex items-center gap-3"
+                        >
+                          <div className="flex-shrink-0 w-8 h-8 bg-gradient-to-br from-[#733857] to-[#8d4466] rounded-full flex items-center justify-center text-white font-bold text-xs">
+                            {index + 1}
+                          </div>
+                          <div className="flex-1 bg-gradient-to-r from-[#f7eef3] to-[#f9f4f6] rounded-lg px-4 py-2 border border-[#733857]/10">
+                            <p className="text-sm font-semibold text-[#733857]">
+                              {date}
+                            </p>
+                            <p className="text-xs text-gray-600">Order placed</p>
+                          </div>
+                          <div className="flex-shrink-0 text-green-500">
+                            ✓
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                    {remainingDays > 0 && (
+                      <div className="mt-3 pt-3 border-t border-[#733857]/10">
+                        <p className="text-xs text-center text-gray-600">
+                          🎯 Order on <span className="font-bold text-[#733857]">{remainingDays} more {remainingDays === 1 ? 'day' : 'different days'}</span> to unlock your free product!
+                        </p>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             {remainingDays > 0 && (
@@ -194,10 +257,10 @@ const LoyaltyProgress = ({ onFreeProductEligible, onSelectFreeProduct }) => {
                     <TrendingUp className="w-5 h-5 text-white" />
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-gray-800" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+                    <p className="text-sm font-semibold text-gray-800">
                       Order on <span className="text-[#733857] font-bold">{remainingDays} more {remainingDays === 1 ? 'day' : 'different days'}</span>
                     </p>
-                    <p className="text-xs text-gray-600 mt-1" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+                    <p className="text-xs text-gray-600 mt-1">
                       to get a FREE product next order! 🎁
                     </p>
                   </div>
@@ -209,8 +272,8 @@ const LoyaltyProgress = ({ onFreeProductEligible, onSelectFreeProduct }) => {
       </AnimatePresence>
 
       <div className="mt-4 pt-4 border-t border-[#733857]/10">
-        <p className="text-xs text-gray-600 text-center" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
-          💡 <span className="font-semibold">Tip:</span> Order on different days to unlock rewards faster!
+        <p className="text-xs text-gray-600 text-center">
+          <span className="font-semibold">Tip:</span> Order on different days to unlock rewards faster!
         </p>
       </div>
     </motion.div>

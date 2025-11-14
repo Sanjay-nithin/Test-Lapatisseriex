@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+﻿import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { ArrowLeft, ShoppingCart, Plus, Minus, Share2, ChevronDown, ChevronUp, Package, Truck, Shield, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -51,7 +51,8 @@ const ProductDisplayPageNew = () => {
         }
       });
     }
-    if (Array.isArray(product?.videos)) {
+    // Only include videos for logged-in users to avoid heavy loads for guests
+    if (user && Array.isArray(product?.videos)) {
       product.videos.forEach((src, idx) => {
         if (src) {
           items.push({ type: 'video', src, key: `video-${idx}` });
@@ -59,7 +60,7 @@ const ProductDisplayPageNew = () => {
       });
     }
     return items;
-  }, [product?.images, product?.videos]);
+  }, [product?.images, product?.videos, user]);
 
   // IMMEDIATE scroll prevention
   React.useLayoutEffect(() => {
@@ -395,12 +396,15 @@ const ProductDisplayPageNew = () => {
     if (currentQuantity > 0) {
       goCart();
     } else {
-      addToCart(product, 1, selectedVariantIndex)
-        .catch(async (error) => {
-          console.error('❌ Error reserving product:', error);
-          try { const { toast } = await import('react-toastify'); toast.error(typeof error?.error === 'string' ? error.error : error?.message || 'Failed to add to cart'); } catch {}
-        });
-      goCart();
+      try {
+        // Wait for addToCart operation to complete before navigating
+        await addToCart(product, 1, selectedVariantIndex);
+        console.log('✅ Product added successfully, navigating to cart');
+        goCart();
+      } catch (error) {
+        console.error('❌ Error reserving product:', error);
+        try { const { toast } = await import('react-toastify'); toast.error(typeof error?.error === 'string' ? error.error : error?.message || 'Failed to add to cart'); } catch {}
+      }
     }
   };
 
@@ -502,8 +506,7 @@ const ProductDisplayPageNew = () => {
         await navigator.share({
           title: shareTitle,
           text: shareText,
-          url: shareUrl,
-        });
+          url: shareUrl});
         console.log('Product shared successfully');
         // Show a confirmation toast even after successful sharing
         toast.success('Product shared successfully!');
@@ -913,7 +916,7 @@ const ProductDisplayPageNew = () => {
             <div className="mb-3">
               <span
                 className="text-sm font-semibold tracking-wide"
-                style={{ color: orderExperience.color, fontFamily: 'system-ui, -apple-system, sans-serif' }}
+                style={{ color: orderExperience.color}}
               >
                 {orderExperience.label}
               </span>
@@ -922,9 +925,9 @@ const ProductDisplayPageNew = () => {
             {/* Dietary Indicators */}
             <div className="flex items-center gap-2 mt-3">
               {product.hasEgg ? (
-                <div className="flex items-center gap-2 rounded-md px-3 py-1.5 border border-gray-200 bg-amber-50">
+                <div className="flex items-center gap-2 rounded-md px-3 py-1.5 border border-gray-200 bg-red-50">
                   <span className="w-5 h-5 grid place-items-center rounded-md border border-red-600 bg-red-50">
-                    <span className="w-0 h-0 border-l-[5px] border-r-[5px] border-b-[8px] border-l-transparent border-r-transparent border-b-orange-600"></span>
+                    <span className="w-0 h-0 border-l-[5px] border-r-[5px] border-b-[8px] border-l-transparent border-r-transparent border-b-red-600"></span>
                   </span>
                   <span className="text-xs tracking-wide" style={{ color: '#1a1a1a', letterSpacing: '0.05em' }}>WITH EGG</span>
                 </div>
@@ -1210,32 +1213,15 @@ const ProductDisplayPageNew = () => {
                 <BlobButton
                   onClick={handleAddToCart}
                   disabled={!product?.isActive || (tracks && totalStock === 0) || isAddingToCart}
-                  className="px-3 h-8"
+                  className="px-4 h-8"
                   style={{ 
                     letterSpacing: '0.05em',
-                    fontSize: '11px'
+                    fontSize: '12px'
                   }}
                 >
-                  {isAddingToCart ? 'Adding...' : 'Add'}
+                  {isAddingToCart ? 'Adding...' : 'Add to Cart'}
                 </BlobButton>
               )}
-              <button
-                onClick={handleReserve}
-                disabled={!product?.isActive || (tracks && totalStock === 0)}
-                className={`px-3 h-8 text-xs font-light tracking-wide uppercase ${
-                  !product?.isActive || totalStock === 0
-                    ? 'bg-gray-50 border border-gray-200 cursor-not-allowed'
-                    : 'text-white hover:opacity-90'
-                }`}
-                style={{ 
-                  letterSpacing: '0.05em',
-                  background: (!product?.isActive || totalStock === 0) 
-                    ? undefined 
-                    : 'linear-gradient(135deg, #733857 0%, #8d4466 50%, #412434 100%)'
-                }}
-              >
-                Reserve
-              </button>
             </div>
           </div>
         </div>
@@ -1518,7 +1504,7 @@ const ProductDisplayPageNew = () => {
                 <div className="mb-4">
                   <span
                     className="text-base font-semibold tracking-wide"
-                    style={{ color: orderExperience.color, fontFamily: 'system-ui, -apple-system, sans-serif' }}
+                    style={{ color: orderExperience.color}}
                   >
                     {orderExperience.label}
                   </span>
@@ -1527,7 +1513,7 @@ const ProductDisplayPageNew = () => {
                 {/* Dietary Indicators */}
                 <div className="flex items-center gap-3 mt-4">
                   {product.hasEgg ? (
-                    <div className="flex items-center gap-2 rounded-md px-4 py-2 border border-gray-200 bg-amber-50">
+                    <div className="flex items-center gap-2 rounded-md px-4 py-2 border border-gray-200 bg-red-50">
                       <span className="w-5 h-5 grid place-items-center rounded-md border border-red-600 bg-red-50">
                         <span className="w-0 h-0 border-l-[6px] border-r-[6px] border-b-[9px] border-l-transparent border-r-transparent border-b-red-600"></span>
                       </span>

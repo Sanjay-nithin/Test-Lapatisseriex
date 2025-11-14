@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+﻿import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { useCart } from '../../hooks/useCart';
 import { useAuth } from '../../hooks/useAuth';
 import { useLocation } from '../../context/LocationContext/LocationContext';
@@ -14,15 +15,7 @@ import HoverButton from '../common/HoverButton';
 import { calculateCartTotals, calculatePricing, formatCurrency } from '../../utils/pricingUtils';
 import { resolveOrderItemVariantLabel } from '../../utils/variantUtils';
 import { getOrderExperienceInfo } from '../../utils/orderExperience';
-import api from '../../services/apiService';
-import NGOSidePanel from './NGOSidePanel';
-
-// Email API URL for Vercel (order confirmation and payment success emails)
-const getEmailApiUrl = () => {
-  const vercelUrl = import.meta.env?.VITE_VERCEL_API_URL;
-  console.log(`📧 [Payment Email API] Using: ${vercelUrl}`);
-  return vercelUrl;
-};
+import api, { createOrderWithEmail, verifyPaymentWithEmail } from '../../services/apiService';
 
 const AUTO_REDIRECT_STORAGE_KEY = 'lapatisserie_payment_redirect';
 const AUTO_REDIRECT_DELAY_MS = 20000;
@@ -37,7 +30,17 @@ const Payment = () => {
   const navigate = useNavigate();
   const [showLocationError, setShowLocationError] = useState(false);
   const [useFreeCash, setUseFreeCash] = useState(false);
-  const [showNGOPanel, setShowNGOPanel] = useState(false);
+  // Donation functionality with persistence
+  const [donationAmount, setDonationAmount] = useState(() => {
+    const saved = localStorage.getItem('lapatisserie_donation_amount');
+    return saved ? parseInt(saved) : 0;
+  });
+  const [selectedDonation, setSelectedDonation] = useState(() => {
+    const saved = localStorage.getItem('lapatisserie_selected_donation');
+    return saved ? parseInt(saved) : null;
+  });
+  const [showDonationThanks, setShowDonationThanks] = useState(false);
+  const [isEditingDonation, setIsEditingDonation] = useState(false);
   const redirectTimerRef = useRef(null);
   const countdownTimerRef = useRef(null);
   const [redirectCountdown, setRedirectCountdown] = useState(null);
@@ -57,11 +60,41 @@ const Payment = () => {
     } catch {}
   }, [setRedirectCountdown]);
 
-  // Handle navigation with side panel trigger
-  const handleNavigateWithPanel = (path) => {
-    // Set flag in sessionStorage to show panel after navigation
+  // Save donation data to localStorage
+  useEffect(() => {
+    localStorage.setItem('lapatisserie_donation_amount', donationAmount.toString());
+  }, [donationAmount]);
+
+  useEffect(() => {
+    if (selectedDonation !== null) {
+      localStorage.setItem('lapatisserie_selected_donation', selectedDonation.toString());
+    } else {
+      localStorage.removeItem('lapatisserie_selected_donation');
+    }
+  }, [selectedDonation]);
+
+  // Donation helper functions
+  const updateDonationAmount = useCallback((amount) => {
+    setDonationAmount(amount);
+    if (amount === 0) {
+      localStorage.removeItem('lapatisserie_donation_amount');
+    }
+  }, []);
+
+  const updateSelectedDonation = useCallback((amount) => {
+    setSelectedDonation(amount);
+  }, []);
+
+  const clearDonationData = useCallback(() => {
+    setDonationAmount(0);
+    setSelectedDonation(null);
+    localStorage.removeItem('lapatisserie_donation_amount');
+    localStorage.removeItem('lapatisserie_selected_donation');
+  }, []);
+
+  // Handle navigation
+  const handleNavigate = (path) => {
     clearAutoRedirect();
-    sessionStorage.setItem('showNGOPanel', 'true');
     navigate(path);
   };
 
@@ -149,9 +182,9 @@ const Payment = () => {
   const appliedFreeCash = useFreeCash ? totalFreeCashAvailable : 0;
   
   const grandTotal = useMemo(() => {
-    const total = discountedCartTotal + deliveryCharge - appliedFreeCash;
+    const total = discountedCartTotal + deliveryCharge - appliedFreeCash + donationAmount;
     return isNaN(total) ? 0 : Math.max(0, total);
-  }, [discountedCartTotal, deliveryCharge, appliedFreeCash]);
+  }, [discountedCartTotal, deliveryCharge, appliedFreeCash, donationAmount]);
 
   const resolvedLocation = useMemo(() => {
     if (user?.location) {
@@ -223,29 +256,11 @@ const Payment = () => {
   // COD-specific loading UX (2-second detailed loading)
   const [codCountdown, setCodCountdown] = useState(null);
   const codCountdownTimerRef = useRef(null);
+  const successPageRef = useRef(null);
 
   useEffect(() => {
     if (!isOrderComplete) {
       setCompletedPaymentMethod(null);
-    }
-  }, [isOrderComplete]);
-
-  // Auto-open NGO panel after payment success (with minimal delay)
-  useEffect(() => {
-    if (isOrderComplete) {
-      // Scroll to top immediately to prevent auto-scroll to footer
-      window.scrollTo({ top: 0, behavior: 'instant' });
-      
-      // Replace the entire history stack to prevent going back to checkout/payment
-      // Push a new state for the payment confirmation
-      window.history.pushState({ orderComplete: true }, '', '/payment');
-      
-      // Show NGO panel after 800ms (just enough for smooth transition)
-      const timer = setTimeout(() => {
-        setShowNGOPanel(true);
-      }, 1500);
-
-      return () => clearTimeout(timer);
     }
   }, [isOrderComplete]);
 
@@ -325,6 +340,25 @@ const Payment = () => {
       };
     }
   }, [isOrderComplete, navigate]);
+
+  useEffect(() => {
+    if (!isOrderComplete) {
+      return;
+    }
+
+    const scrollToTop = () => {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+      if (successPageRef.current) {
+        successPageRef.current.scrollIntoView({ block: 'start', behavior: 'auto' });
+      }
+    };
+
+    // Scroll immediately and shortly after layout settles
+    scrollToTop();
+    const recheck = setTimeout(scrollToTop, 60);
+
+    return () => clearTimeout(recheck);
+  }, [isOrderComplete]);
 
   const timezoneAbbreviation = useMemo(() => {
     if (!timezone) {
@@ -444,6 +478,9 @@ const Payment = () => {
 
   const createOrder = async (amount, paymentMethod = 'razorpay') => {
     try {
+      // Log which API base will be used for order creation (email will be handled server-side)
+      const orderApiBase = import.meta.env.VITE_VERCEL_API_URL;
+      console.log(`🧭 [Order] Creating order via API: ${orderApiBase || 'N/A'} (method: ${paymentMethod})`);
       const orderData = {
         amount: Math.round(amount * 100), // Convert to paise
         currency: 'INR',
@@ -499,6 +536,11 @@ const Payment = () => {
         },
         deliveryLocation: user?.location?.fullAddress || getCurrentLocationName(),
         hostelName: user?.hostel?.name || null,
+        donationDetails: donationAmount > 0 ? {
+          donationAmount: donationAmount,
+          initiativeName: 'கற்பிப்போம் பயிலகம் - Education Initiative',
+          initiativeDescription: 'Supporting student education and learning resources'
+        } : null,
         orderSummary: {
           cartTotal: discountedCartTotal,
           discountedTotal: discountedCartTotal,
@@ -508,34 +550,27 @@ const Payment = () => {
         }
       };
 
-      const emailApiUrl = getEmailApiUrl();
-      console.log('═════════════════════════════════════════════════════════');
-      console.log('📧 [ORDER EMAIL] Creating order - Will trigger confirmation emails');
-      console.log('🌐 API URL Used:', emailApiUrl);
-      console.log('👤 User Email:', user?.email);
-      console.log('💰 Order Amount:', grandTotal);
-      console.log('💳 Payment Method:', paymentMethod);
-      console.log('═════════════════════════════════════════════════════════');
-      
-      const { data } = await api.post('/payments/create-order', orderData, {
-        baseURL: emailApiUrl  // Override baseURL to use Vercel for order confirmation email
-      });
+  // Route order creation to Vercel API (ensures email sending on create)
+  const data = await createOrderWithEmail(orderData);
+
+      // Log the outcome and expected email behavior
+      if (data?.success !== false) {
+        const emailNote = paymentMethod === 'cod'
+          ? 'emailTrigger=queued on server (async)'
+          : 'emailTrigger=will occur after payment verification';
+        console.log(`✅ [Order] create-order success via ${orderApiBase || 'N/A'} (${emailNote})`);
+      } else {
+        console.warn(`⚠️ [Order] create-order response indicated failure via ${orderApiBase || 'N/A'}`);
+      }
       
       // Handle duplicate order response
       if (data.isDuplicate) {
         console.log('⚠️ Duplicate order detected, using existing order:', data.orderNumber);
-        console.log('📧 [ORDER EMAIL] Skipping email (duplicate order)');
-      } else {
-        console.log('✅ [ORDER EMAIL] Order created successfully!');
-        console.log('📧 Order Number:', data.orderNumber);
-        console.log('✉️ Confirmation email should be sent to:', user?.email);
-        console.log('✉️ Admin notification should be sent to active admins');
-        console.log('═════════════════════════════════════════════════════════');
       }
       
       return data;
     } catch (error) {
-      console.error('❌ Error creating order:', error);
+      console.error('Error creating order:', error);
       throw error;
     }
   };
@@ -580,41 +615,31 @@ const Payment = () => {
           }
           window.__paymentVerifying = true;
           try {
-            const emailApiUrl = getEmailApiUrl();
-            console.log('═════════════════════════════════════════════════════════');
-            console.log('📧 [PAYMENT EMAIL] Verifying payment - Will trigger success emails');
-            console.log('🌐 API URL Used:', emailApiUrl);
-            console.log('👤 User Email:', user?.email);
-            console.log('💳 Payment ID:', response.razorpay_payment_id);
-            console.log('📦 Order ID:', response.razorpay_order_id);
-            console.log('═════════════════════════════════════════════════════════');
-            
-            const verifyResponse = await api.post('/payments/verify', {
+            console.log('✅ Payment successful, verifying...');
+            const verifyData = await verifyPaymentWithEmail({
               razorpay_order_id: response.razorpay_order_id,
               razorpay_payment_id: response.razorpay_payment_id,
-              razorpay_signature: response.razorpay_signature,
-            }, {
-              baseURL: emailApiUrl  // Override baseURL to use Vercel for payment success email
-            });
-            
-            const verifyData = verifyResponse.data;
+              razorpay_signature: response.razorpay_signature});
             if (verifyData.success) {
-              console.log('✅ [PAYMENT EMAIL] Payment verified successfully!');
-              console.log('📧 Order Number:', verifyData.orderNumber);
-              console.log('✉️ Payment success email should be sent to:', user?.email);
-              console.log('✉️ Admin order notification should be sent to active admins');
-              console.log('═════════════════════════════════════════════════════════');
+              console.log('✅ Payment verified successfully');
+              // Log which API verified and that email dispatch is handled server-side
+              const verifyApiBase = import.meta.env.VITE_VERCEL_API_URL;
+              console.log(`📬 [Order] Online payment verified via ${verifyApiBase || 'N/A'} (emailTrigger=queued on server, async)`);
               setCompletedPaymentMethod('razorpay');
               setIsOrderComplete(true);
               setOrderNumber(verifyData.orderNumber);
               try {
                 await clearCart();
                 console.log('🧹 Cart cleared after successful payment');
+                clearDonationData();
+                console.log('💝 Donation data cleared after successful payment');
               } catch (cartError) {
                 console.error('❌ Failed to clear cart after payment:', cartError);
               }
             } else {
               console.error('❌ Payment verification failed:', verifyData.message);
+              const verifyApiBase = import.meta.env.VITE_VERCEL_API_URL;
+              console.log(`🚫 [Order] Payment verification failed via ${verifyApiBase || 'N/A'} (email not triggered)`);
               setCompletedPaymentMethod(null);
               alert('Payment verification failed. Please contact support with your order details.');
               try {
@@ -640,12 +665,10 @@ const Payment = () => {
         prefill: {
           name: user?.name || user?.displayName || '',
           email: user?.email || '',
-          contact: user?.phone || '',
-        },
+          contact: user?.phone || ''},
         theme: {
           color: '#733857',
-          backdrop_color: 'rgba(115, 56, 87, 0.6)',
-        },
+          backdrop_color: 'rgba(115, 56, 87, 0.6)'},
         modal: {
           backdropclose: false,
           escape: true,
@@ -655,16 +678,15 @@ const Payment = () => {
             console.log('🚫 Razorpay popup dismissed/cancelled by user');
             setIsProcessing(false);
             try {
-              const cancelResponse = await fetch(`${import.meta.env.VITE_API_URL}/payments/cancel-order`, {
+              // Cancel the order on the same backend used for creation (Vercel)
+              const cancelResponse = await fetch(`${import.meta.env.VITE_VERCEL_API_URL}/payments/cancel-order`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
                   'Authorization': `Bearer ${user?.token || localStorage.getItem('token')}`
                 },
                 body: JSON.stringify({
-                  razorpay_order_id: orderData.orderId,
-                }),
-              });
+                  razorpay_order_id: orderData.orderId})});
               const cancelData = await cancelResponse.json();
               if (cancelData.success) {
                 console.log('✅ Order cancelled successfully on backend');
@@ -680,9 +702,7 @@ const Payment = () => {
             } catch (error) {
               console.error('❌ Failed to cancel order:', error);
             }
-          },
-        },
-      };
+          }}};
       const razorpay = new window.Razorpay(options);
       razorpay.open();
     } catch (error) {
@@ -734,8 +754,14 @@ const Payment = () => {
       
       if (orderData.isDuplicate) {
         console.log('✅ Using existing order (duplicate detected):', orderData.orderNumber);
+        // For duplicates, backend will not re-send emails; log explicitly
+        const orderApiBase = import.meta.env.VITE_VERCEL_API_URL;
+        console.log(`ℹ️ [Order] Duplicate COD order via ${orderApiBase || 'N/A'} (email not re-sent)`);
       } else {
         console.log('✅ New COD order created:', orderData.orderNumber);
+        // Log which API created the order and that email was queued server-side
+        const orderApiBase = import.meta.env.VITE_VERCEL_API_URL;
+        console.log(`📬 [Order] COD order placed via ${orderApiBase || 'N/A'} (emailTrigger=queued on server, async)`);
       }
       
       setOrderNumber(orderData.orderNumber);
@@ -744,6 +770,8 @@ const Payment = () => {
       
       try {
         await clearCart();
+        clearDonationData();
+        console.log('🧹 Cart and donation data cleared after COD order');
       } catch (cartError) {
         console.error('❌ Failed to clear cart after COD order:', cartError);
         // Don't fail the order if cart clear fails
@@ -812,7 +840,12 @@ if (isOrderComplete) {
       : 'Payment captured successfully via Razorpay.';
 
     return (
-      <div className="min-h-screen  px-4 py-10" style={{ fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif' }}>
+      <div
+        ref={successPageRef}
+        tabIndex={-1}
+        className="min-h-screen  px-4 py-10"
+        style={{  }}
+      >
         {/* Main content card with sharp corners */}
         <div className="mx-auto max-w-lg  p-8 sm:p-10">
           <div className="flex flex-col items-center text-center">
@@ -856,10 +889,40 @@ if (isOrderComplete) {
               )}
             </div>
 
+            {/* Education Initiative Thank You Banner */}
+            {donationAmount > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.5, duration: 0.6 }}
+                className="mt-6 w-full border-2 border-[#733857]/20 bg-gradient-to-r from-amber-50/80 via-white to-pink-50/80 p-6 text-center shadow-sm"
+              >
+                <motion.div
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                transition={{ delay: 0.8, type: 'spring', stiffness: 300 }}
+                className="flex justify-center mb-3"
+              >
+                <div className="w-12 h-12 bg-gradient-to-br from-[#733857] to-[#8d4466] flex items-center justify-center">
+                </div>
+              </motion.div>                <h3 className="text-lg font-bold text-[#412434] mb-2">Thank You for Supporting Education</h3>
+                <p className="text-sm text-[#8d4466] mb-3 leading-relaxed">
+                  Your Rs.{donationAmount} contribution will help provide online learning resources to underprivileged children 
+                  through our கற்றல் பயிலகம் initiative under Aramsei Payilagam.
+                </p>
+                
+                <div className="bg-white/60 text-center">
+                  <div className="flex items-center justify-center text-xs text-[#733857]">
+                    <span className="font-medium">Your donation has been added to the Education Fund</span>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
             {/* 4. Updated Button Styles (Sharp Corners) */}
             <div className="mt-8 sm:mt-10 flex w-full flex-col-reverse gap-3 sm:gap-4 sm:flex-row sm:justify-center px-2 sm:px-0">
               <HoverButton
-                onClick={() => handleNavigateWithPanel('/')}
+                onClick={() => handleNavigate('/')}
                 text="Back to Home"
                 hoverText="Go Home"
                 variant="outline"
@@ -867,7 +930,7 @@ if (isOrderComplete) {
                 className="w-full sm:w-auto"
               />
               <HoverButton
-                onClick={() => handleNavigateWithPanel('/products')}
+                onClick={() => handleNavigate('/products')}
                 text="Browse Products"
                 hoverText="View Products"
                 variant="primary"
@@ -875,7 +938,7 @@ if (isOrderComplete) {
                 className="w-full sm:w-auto"
               />
               <HoverButton
-                onClick={() => handleNavigateWithPanel('/orders')}
+                onClick={() => handleNavigate('/orders')}
                 text="My Orders"
                 hoverText="View Orders"
                 variant="secondary"
@@ -891,9 +954,6 @@ if (isOrderComplete) {
             
           </div>
         </div>
-
-        {/* NGO Side Panel */}
-        <NGOSidePanel isOpen={showNGOPanel} onClose={() => setShowNGOPanel(false)} />
       </div>
     );
   }
@@ -901,7 +961,7 @@ if (isOrderComplete) {
   // --- Location Error Page (Unchanged) ---
   if (showLocationError) {
     return (
-      <div className="container mx-auto min-h-screen px-3 py-4 pt-4 sm:px-4 sm:py-8 sm:pt-8" style={{ fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif' }}>
+      <div className="container mx-auto min-h-screen px-3 py-4 pt-4 sm:px-4 sm:py-8 sm:pt-8" style={{  }}>
         <div className="max-w-2xl mx-auto">
           <div className="flex items-center mb-4 sm:mb-6">
             <div className="hidden sm:flex">
@@ -955,9 +1015,9 @@ if (isOrderComplete) {
 
   // --- Main Payment Page (Redesigned Split-Screen Layout) ---
   return (
-    <div className="-mt-2 sm:-mt-3 md:-mt-4" style={{ fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif' }}>
+    <div className="-mt-2 sm:-mt-3 md:-mt-4" style={{  }}>
       <ShopClosureOverlay overlayType="page" showWhenClosed={!isOpen}>
-    <div className="min-h-screen bg-[#f8f5f6] pb-12">
+  <div className="min-h-screen bg-[#f8f5f6] pb-12 overflow-x-hidden">
 
         {/* --- Website Live Timer at the very top --- */}
         <div className="w-full bg-white border-b border-slate-200">
@@ -1102,30 +1162,283 @@ if (isOrderComplete) {
                   </div>
 
                   {totalFreeCashAvailable > 0 && (
-                    <div className="border border-slate-200 bg-slate-50 p-3">
-                      <label className="flex items-center justify-between text-sm font-medium text-slate-900">
-                        <span>Use free cash</span>
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 border border-slate-400 bg-white text-emerald-600 focus:ring-emerald-500"
-                          checked={useFreeCash}
-                          onChange={(e) => setUseFreeCash(e.target.checked)}
-                        />
-                      </label>
-                      <p className="mt-2 text-xs text-slate-500">Available: {formatCurrency(totalFreeCashAvailable)}</p>
-                      {useFreeCash && (
-                        <div className="mt-2 flex justify-between text-emerald-600">
-                          <span>Applied</span>
-                          <span>-{formatCurrency(appliedFreeCash)}</span>
+                    <motion.div 
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="relative bg-gradient-to-br from-amber-50 to-yellow-50 p-3 rounded-lg border-2"
+                      style={{
+                        borderColor: '#D4AF37',
+                        boxShadow: '0 2px 8px rgba(212, 175, 55, 0.2)'
+                      }}
+                    >
+                      <label className="relative flex items-center justify-between text-sm cursor-pointer">
+                        <div className="flex items-center gap-2.5">
+                          <motion.div 
+                            className="w-6 h-6 rounded-full flex items-center justify-center"
+                            style={{
+                              background: 'linear-gradient(135deg, #3E2723 0%, #5D4037 100%)',
+                              boxShadow: '0 2px 4px rgba(62, 39, 35, 0.3)'
+                            }}
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                          >
+                            <motion.div
+                              initial={{ rotate: 0 }}
+                              animate={{ rotate: useFreeCash ? 360 : 0 }}
+                              transition={{ duration: 0.6, ease: 'easeInOut' }}
+                            >
+                              <svg className="w-4 h-4" style={{ color: '#D4AF37' }} fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm.31-8.86c-1.77-.45-2.34-.94-2.34-1.67 0-.84.79-1.43 2.1-1.43 1.38 0 1.9.66 1.94 1.64h1.71c-.05-1.34-.87-2.57-2.49-2.97V5H10.9v1.69c-1.51.32-2.72 1.3-2.72 2.81 0 1.79 1.49 2.69 3.66 3.21 1.95.46 2.34 1.15 2.34 1.87 0 .53-.39 1.39-2.1 1.39-1.6 0-2.23-.72-2.32-1.64H8.04c.1 1.7 1.36 2.66 2.86 2.97V19h2.34v-1.67c1.52-.29 2.72-1.16 2.73-2.77-.01-2.2-1.9-2.96-3.66-3.42z"/>
+                              </svg>
+                            </motion.div>
+                          </motion.div>
+                          <div>
+                            <span className="font-semibold" style={{ color: '#3E2723' }}>
+                              Apply Free Cash
+                            </span>
+                            <div className="text-xs" style={{ color: '#D4AF37' }}>
+                              Save {formatCurrency(totalFreeCashAvailable)} instantly
+                            </div>
+                          </div>
                         </div>
-                      )}
-                    </div>
+                        
+                        <div className="flex items-center gap-2.5">
+                          <div className="text-right">
+                            <div className="text-sm font-bold" style={{ color: '#D4AF37' }}>
+                              {formatCurrency(totalFreeCashAvailable)}
+                            </div>
+                            <div className="text-xs" style={{ color: '#5D4037' }}>Available</div>
+                          </div>
+                          
+                          <motion.div
+                            whileHover={{ scale: 1.1 }}
+                            whileTap={{ scale: 0.9 }}
+                          >
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 border-2 bg-white focus:ring-2 rounded transition-all duration-300"
+                              style={{ 
+                                accentColor: '#D4AF37',
+                                borderColor: '#D4AF37'
+                              }}
+                              checked={useFreeCash}
+                              onChange={(e) => setUseFreeCash(e.target.checked)}
+                            />
+                          </motion.div>
+                        </div>
+                      </label>
+                      
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ 
+                          height: useFreeCash ? 'auto' : 0,
+                          opacity: useFreeCash ? 1 : 0
+                        }}
+                        transition={{ duration: 0.3, ease: 'easeInOut' }}
+                        className="overflow-hidden"
+                      >
+                        <div className="mt-2 pt-2" style={{ borderTop: '1px solid #D4AF37' }}>
+                          <div className="flex justify-between items-center p-2 rounded-lg" style={{ 
+                            background: 'linear-gradient(135deg, #3E2723 0%, #5D4037 100%)',
+                            boxShadow: '0 2px 6px rgba(212, 175, 55, 0.2)'
+                          }}>
+                            <div className="flex items-center gap-1.5">
+                              <svg className="w-4 h-4" style={{ color: '#D4AF37' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                              </svg>
+                              <span className="font-medium text-sm" style={{ color: '#FFD700' }}>Free Cash Applied</span>
+                            </div>
+                            <span className="font-bold text-sm" style={{ color: '#D4AF37' }}>
+                              -{formatCurrency(appliedFreeCash)}
+                            </span>
+                          </div>
+                        </div>
+                      </motion.div>
+                      
+                      <motion.div
+                        initial={{ height: 'auto', opacity: 1 }}
+                        animate={{ 
+                          height: useFreeCash ? 0 : 'auto',
+                          opacity: useFreeCash ? 0 : 1
+                        }}
+                        transition={{ duration: 0.3, ease: 'easeInOut' }}
+                        className="overflow-hidden"
+                      >
+                        <div className="mt-2 pt-2" style={{ borderTop: '1px solid #D4AF37' }}>
+                          <div className="flex items-center gap-1.5 text-xs" style={{ color: '#5D4037' }}>
+                            <svg className="w-3.5 h-3.5" style={{ color: '#D4AF37' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span>Check the box above to apply your free cash and save money!</span>
+                          </div>
+                        </div>
+                      </motion.div>
+                    </motion.div>
                   )}
 
                   <div className="flex justify-between">
                     <span>Delivery</span>
                     <span className="font-medium text-slate-900">{formatCurrency(deliveryCharge)}</span>
                   </div>
+
+                  {/* Show donation as a line item when selected */}
+                  {donationAmount > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      className="flex justify-between items-center py-1"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Donation to Hope Fund</span>
+                        <svg className="w-3 h-3 text-[#733857]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                        </svg>
+                      </div>
+                      <span className="font-medium text-[#733857]">+{formatCurrency(donationAmount)}</span>
+                    </motion.div>
+                  )}
+
+                  {/* Charity Donation Widget */}
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="flex items-center justify-between py-3 px-4 transition-all duration-300 relative"
+                    style={{
+                      background: 'linear-gradient(90deg, #dec4d7 0%, #f4e6f1 60%, rgba(255,255,255,0.95) 100%)',
+                      clipPath: 'polygon(2% 0, 100% 0, 100% 100%, 0% 100%)',
+                      boxShadow: '0 2px 4px rgba(115, 56, 87, 0.12)'
+                    }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-1">
+                        <span className="text-sm font-semibold text-[#733857]">Donate to கற்பிப்போம் பயிலகம்</span>
+                        <motion.button
+                          whileHover={{ scale: 1.1 }}
+                          whileTap={{ scale: 0.9 }}
+                          onClick={() => setShowDonationThanks(true)}
+                          className="p-1 text-[#733857] hover:bg-[#733857]/10 rounded-full transition-all duration-200"
+                          title="Learn more about this education initiative"
+                        >
+                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/>
+                          </svg>
+                        </motion.button>
+                      </div>
+                      <div className="flex items-center gap-1 px-2 py-1 hover:border-[#733857]/40 transition-colors">
+                        <span className="text-sm text-[#733857] font-medium">₹</span>
+                        {isEditingDonation ? (
+                          <motion.input
+                            type="number"
+                            min="1"
+                            max="1000"
+                            value={selectedDonation || ''}
+                            onChange={(e) => {
+                              const value = parseInt(e.target.value) || 0;
+                              if (value >= 0) {
+                                updateSelectedDonation(value);
+                                // Don't auto-set donationAmount here
+                              }
+                            }}
+                            onBlur={() => setIsEditingDonation(false)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                setIsEditingDonation(false);
+                              }
+                            }}
+                            autoFocus
+                            whileFocus={{ scale: 1.02 }}
+                            className="w-12 text-sm text-[#412434] bg-transparent text-center font-semibold"
+                            placeholder="4"
+                          />
+                        ) : (
+                          <span className="w-12 text-sm text-[#412434] text-center font-semibold">
+                            {selectedDonation || 4}
+                          </span>
+                        )}
+                        <motion.button
+                          initial={{ opacity: 0.6 }}
+                          animate={{ opacity: 0.8 }}
+                          whileHover={{ opacity: 1, scale: 1.15 }}
+                          whileTap={{ scale: 0.9 }}
+                          onClick={() => {
+                            setIsEditingDonation(true);
+                            // Reset donation state to allow re-adding
+                            updateDonationAmount(0);
+                          }}
+                          className="ml-1 p-1.5 rounded-md bg-white border border-[#733857] hover:border-[#8d4466] transition-all duration-200"
+                        >
+                          <motion.svg 
+                            className="w-3 h-3 text-[#733857]" 
+                            fill="none" 
+                            stroke="currentColor" 
+                            viewBox="0 0 24 24"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                          </motion.svg>
+                        </motion.button>
+                      </div>
+                    </div>
+                    
+                    <motion.button
+                      whileHover={{ 
+                        scale: 1.05,
+                        boxShadow: "0 3px 10px rgba(115, 56, 87, 0.25)"
+                      }}
+                      whileTap={{ scale: 0.98 }}
+                      transition={{ duration: 0.3 }}
+                      onClick={() => {
+                        if (donationAmount > 0) {
+                          // Remove donation
+                          updateDonationAmount(0);
+                        } else {
+                          // Add donation with current selected amount
+                          const amount = selectedDonation || 4;
+                          updateDonationAmount(amount);
+                        }
+                      }}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-md border-2 border-[#733857] bg-white text-[#733857] transition-all duration-300 shadow-sm hover:shadow-lg hover:bg-[#733857] hover:text-white`}
+                    >
+                      <motion.span
+                        transition={{ duration: 0.3 }}
+                      >
+                        {donationAmount > 0 ? 'ADDED' : 'ADD'}
+                      </motion.span>
+                    </motion.button>
+                  </motion.div>
+
+                  {/* Message when amount is selected but not added */}
+                  {!donationAmount && selectedDonation > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      className="mt-2"
+                    >
+                      <div className="flex items-center gap-2 text-xs p-2 bg-purple-50/50 border-l-2 border-purple-300 rounded">
+                        <svg className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                        </svg>
+                        <span className="text-gray-600 italic">
+                          Optional: Click <strong className="text-purple-600">ADD</strong> if you wish to contribute ₹{selectedDonation} to help students
+                        </span>
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {/* Dynamic total update with enhanced styling */}
+                  {donationAmount > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      className="mt-3 pt-3"
+                    >
+                      <div className="flex justify-between items-center text-sm p-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[#8d4466] font-bold">Education Fund Contribution</span>
+                        </div>
+                        <span className="font-bold text-[#733857] text-lg">Rs.{donationAmount}</span>
+                      </div>
+                    </motion.div>
+                  )}
 
                   <div className="flex items-center justify-between border-t border-slate-200 pt-4 text-base font-semibold text-slate-900">
                     <span className="text-xl">Total due</span>
@@ -1196,129 +1509,122 @@ if (isOrderComplete) {
             )}
             {/* --- End Delivery Card --- */}
 
+            {/* --- Free Cash Information Section --- */}
+          
 
-            {/* --- Payment Card (Reference layout) --- */}
-              <div className=" p-5 sm:p-6 lg:p-7">
-              <div className="flex flex-col gap-1">
-                <h1 className="text-lg font-semibold uppercase tracking-[0.14em] text-[#1a1a1a]">Payment</h1>
-                <p className="text-xs uppercase tracking-[0.16em] text-[rgba(26,26,26,0.55)]">Choose how you would like to pay</p>
-              </div>
 
-              <div className="mt-6 space-y-4">
-                {/* Razorpay Payment Method */}
-                <div className="relative">
-                  <FlipButton
-                    frontText="Pay Online"
-                    backText="Razorpay Secure"
-                    selected={isRazorpaySelected}
+            {/* --- Payment Card (Compact • Responsive) --- */}
+              <div className="rounded-3xl border border-[#733857]/20 bg-white p-5 sm:p-6 lg:p-7 shadow-sm">
+                {/* Heading */}
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col">
+                    <h1 className="text-lg sm:text-xl font-semibold uppercase tracking-[0.14em] text-[#1a1a1a]">Payment</h1>
+                    <p className="text-xs sm:text-[11px] uppercase tracking-[0.14em] text-[rgba(26,26,26,0.55)]">Select a method</p>
+                  </div>
+                </div>
+
+                {/* Methods as tiles */}
+                <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  {/* Razorpay */}
+                  <button
+                    type="button"
                     onClick={() => setSelectedPaymentMethod('razorpay')}
-                    className="payment-method-flip w-full"
-                  />
-                  {isRazorpaySelected && (
-                    <div className="mt-3 p-4 bg-[#f7eef3] border border-[#733857] rounded-lg">
-                      <div className="flex items-center gap-2 mb-2">
-                        <img src="/images/razorpay.svg" alt="Razorpay" className="h-4 w-auto" />
-                        <span className="text-sm font-semibold text-[#733857]">Razorpay Secure Checkout</span>
-                        <span className="text-xs bg-[#733857] text-white px-2 py-1 rounded">Recommended</span>
-                      </div>
-                      <p className="text-xs text-[#6f5260] mb-3">
-                        Pay instantly with UPI, cards, net banking or wallets through Razorpay's protected gateway.
-                      </p>
-                      <div className="flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8d4466]">
-                        <span className="border border-[#d9c4cd] px-2 py-1 rounded">UPI</span>
-                        <span className="border border-[#d9c4cd] px-2 py-1 rounded">Cards</span>
-                        <span className="border border-[#d9c4cd] px-2 py-1 rounded">Net Banking</span>
-                        <span className="border border-[#d9c4cd] px-2 py-1 rounded">Wallets</span>
+                    className={`group flex items-center justify-between rounded-2xl border px-4 py-4 sm:px-5 sm:py-5 transition-all ${
+                      isRazorpaySelected
+                        ? 'border-[#733857] bg-[#f8f0f4] ring-2 ring-[#733857]/40'
+                        : 'border-slate-200 hover:border-[#733857]/50 bg-white'
+                    }`}
+                    aria-pressed={isRazorpaySelected}
+                  >
+                    <div className="flex items-center gap-3">
+                      <img src="/images/razorpay.svg" alt="Razorpay" className="h-5 w-auto" />
+                      <div className="text-left">
+                        <p className="text-sm sm:text-base font-semibold text-[#412434]">Pay Online</p>
+                        <p className="mt-0.5 text-[11px] sm:text-xs text-[#6f5260]">UPI • Card • Netbanking • Wallet</p>
                       </div>
                     </div>
-                  )}
-                </div>
+                    <span
+                      className={`text-[10px] sm:text-xs font-bold rounded-full px-2 py-1 ${
+                        isRazorpaySelected ? 'bg-[#733857] text-white' : 'bg-slate-100 text-[#733857]'
+                      }`}
+                    >
+                      Secure
+                    </span>
+                  </button>
 
-                {/* Cash on Delivery Method */}
-                <div className="relative">
-                  <FlipButton
-                    frontText="Cash on Delivery"
-                    backText="Pay at Doorstep"
-                    selected={isCodSelected}
+                  {/* COD */}
+                  <button
+                    type="button"
                     onClick={() => setSelectedPaymentMethod('cod')}
-                    className="payment-method-flip w-full"
-                  />
-                  {isCodSelected && (
-                    <div className="mt-3 p-4 bg-[#f1e8ed] border border-[#412434] rounded-lg">
-                      <div className="flex items-center gap-2 mb-2">
-                        <img src="/images/cod.svg" alt="Cash on Delivery" className="h-4 w-auto" />
-                        <span className="text-sm font-semibold text-[#412434]">Cash on Delivery</span>
+                    className={`group flex items-center justify-between rounded-2xl border px-4 py-4 sm:px-5 sm:py-5 transition-all ${
+                      isCodSelected
+                        ? 'border-[#412434] bg-[#f3edf0] ring-2 ring-[#412434]/30'
+                        : 'border-slate-200 hover:border-[#412434]/50 bg-white'
+                    }`}
+                    aria-pressed={isCodSelected}
+                  >
+                    <div className="flex items-center gap-3">
+                      <img src="/images/cod.svg" alt="Cash on Delivery" className="h-5 w-auto" />
+                      <div className="text-left">
+                        <p className="text-sm sm:text-base font-semibold text-[#412434]">Cash on Delivery</p>
+                        <p className="mt-0.5 text-[11px] sm:text-xs text-[#6f5260]">Pay at your doorstep</p>
                       </div>
-                      <p className="text-xs text-[#6f5260]">
-                        Pay once your desserts arrive. We will reconfirm the order and bring an invoice along.
-                      </p>
+                    </div>
+                    <span
+                      className={`text-[10px] sm:text-xs font-bold rounded-full px-2 py-1 ${
+                        isCodSelected ? 'bg-[#412434] text-white' : 'bg-slate-100 text-[#412434]'
+                      }`}
+                    >
+                      COD
+                    </span>
+                  </button>
+                </div>
+
+                {/* Short helper bar */}
+                <div className="mt-4 rounded-lg border border-dashed border-[#d9c4cd] bg-[#f9f4f6] px-4 py-3 sm:px-5 text-[12px] sm:text-xs text-[#412434]">
+                  {isRazorpaySelected ? (
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <span className="font-semibold text-[#733857] uppercase tracking-[0.12em]">Razorpay</span>
+                      <span className="text-[#6f5260]">Pay {formatCurrency(grandTotal)} securely</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <span className="font-semibold text-[#412434] uppercase tracking-[0.12em]">Pay on delivery</span>
+                      <span className="text-[#6f5260]">Have {formatCurrency(grandTotal)} ready</span>
                     </div>
                   )}
                 </div>
-              </div>
 
-              <div className="mt-5 rounded border border-dashed border-[#d9c4cd] bg-[#f9f4f6] px-4 py-4 text-xs leading-relaxed text-[#412434] sm:px-5">
-                {isRazorpaySelected ? (
-                  <>
-                    <span className="font-semibold uppercase tracking-[0.16em] text-[#733857]">Digital checkout</span>
-                    <p className="mt-2 text-[13px] text-[#6f5260]">
-                      We will redirect you to Razorpay to collect {formatCurrency(grandTotal)} securely with your preferred digital method.
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <span className="font-semibold uppercase tracking-[0.16em] text-[#412434]">Pay on delivery</span>
-                    <p className="mt-2 text-[13px] text-[#6f5260]">
-                      Please keep {formatCurrency(grandTotal)} ready. Our delivery team carries change and a printed receipt.
-                    </p>
-                  </>
+                {/* Terms */}
+                <label className="mt-5 flex items-start gap-3 text-[12px] sm:text-[13px] text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={hasAcceptedTerms}
+                    onChange={(e) => setHasAcceptedTerms(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 border border-slate-400 text-[#733857] focus:ring-[#733857]"
+                  />
+                  <span>
+                    I accept the <a href="/terms" className="text-[#733857] underline">terms</a> and <a href="/privacy-policy" className="text-[#733857] underline">privacy</a>.
+                  </span>
+                </label>
+
+                {!hasAcceptedTerms && (
+                  <p className="mt-2 text-[11px] uppercase tracking-[0.16em] text-[rgba(26,26,26,0.55)]">Accept terms to continue</p>
                 )}
-              </div>
 
-              <label className="mt-6 flex items-start gap-3 text-xs leading-relaxed text-slate-600 sm:text-[13px]">
-                <input
-                  type="checkbox"
-                  checked={hasAcceptedTerms}
-                  onChange={(event) => setHasAcceptedTerms(event.target.checked)}
-                  className="mt-1 h-4 w-4 border border-slate-400 text-[#733857] focus:ring-[#733857]"
-                />
-                <span>
-                  I have reviewed my order details and accept the{' '}
-                  <a
-                    href="/terms"
-                    className="text-[#733857] underline decoration-[#733857] underline-offset-2 transition hover:text-[#5e2c46]"
-                  >
-                    terms &amp; conditions
-                  </a>{' '}
-                  and{' '}
-                  <a
-                    href="/privacy-policy"
-                    className="text-[#733857] underline decoration-[#733857] underline-offset-2 transition hover:text-[#5e2c46]"
-                  >
-                    privacy policy
-                  </a>
-                  .
-                </span>
-              </label>
-
-              {!hasAcceptedTerms && (
-                <p className="mt-2 text-[11px] uppercase tracking-[0.18em] text-[rgba(26,26,26,0.55)]">
-                  Accept the terms to enable placing your order.
-                </p>
-              )}
-
-              <StyleButton
-                onClick={handlePlaceOrder}
-                disabled={isPlaceOrderDisabled}
-                className="place-order-btn mt-6"
-              >
-                {(() => {
-                  if (isProcessing) return isCodSelected ? 'Placing your order…' : 'Processing…';
-                  if (lastOrderAttempt && (Date.now() - lastOrderAttempt) < 2000) return 'Please wait…';
-                  if (!hasAcceptedTerms) return 'Accept terms to continue';
-                  return placeOrderLabel;
-                })()}
-              </StyleButton>
+                {/* CTA */}
+                <StyleButton
+                  onClick={handlePlaceOrder}
+                  disabled={isPlaceOrderDisabled}
+                  className="place-order-btn mt-5"
+                >
+                  {(() => {
+                    if (isProcessing) return isCodSelected ? 'Placing order…' : 'Processing…';
+                    if (lastOrderAttempt && (Date.now() - lastOrderAttempt) < 2000) return 'Please wait…';
+                    if (!hasAcceptedTerms) return 'Accept terms to continue';
+                    return placeOrderLabel;
+                  })()}
+                </StyleButton>
               {/* COD detailed loading overlay */}
               {isProcessing && isCodSelected && !isOrderComplete && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -1355,6 +1661,40 @@ if (isOrderComplete) {
         </div>
         </div>
       </ShopClosureOverlay>
+
+      {/* Donation Information Modal */}
+      {showDonationThanks && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowDonationThanks(false)}
+        >
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.9, opacity: 0 }}
+            className="bg-white rounded-2xl p-6 max-w-md w-full mx-4 "
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-center">
+             
+              
+              <h3 className="text-xl font-bold text-[#412434] mb-2">கற்பிப்போம் பயிலகம் - Education Initiative</h3>
+              <p className="text-sm text-[#8d4466] mb-4 leading-relaxed">
+                An Initiative under Aramsei Payilagam providing FREE ONLINE CLASSES to underprivileged children. 
+                Your contribution helps provide educational resources and technology access.
+              </p>
+              
+             
+
+             
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+
       <div className="px-4 py-6 sm:px-6 lg:px-8">
         <ServiceAssuranceBanner
           className="mx-auto flex w-full max-w-7xl"

@@ -30,25 +30,41 @@ import imageReprocessRoutes from './routes/imageReprocessRoutes.js';
 import timeSettingsRoutes from './routes/timeSettingsRoutes.js';
 import newCartRoutes from './routes/newCartRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
-import twilioRoutes from './routes/twilioRoutesNew.js';
+
 import stockRoutes from './routes/stockRoutes.js';
 import stockValidationRoutes from './routes/stockValidationRoutes.js';
-import analyticsRoutes from './routes/analyticsRoutes.js';
 import contactRoutes from './routes/contactRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
 import newsletterRoutes from './routes/newsletterRoutes.js';
+import emailDispatchRoutes from './routes/emailDispatchRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
-import ngoMediaRoutes from './routes/ngoMediaRoutes.js';
 import sitemapRoutes from './routes/sitemapRoutes.js';
 import freeProductRoutes from './routes/freeProductRoutes.js';
-import testEmailRoutes from './routes/testEmailRoutes.js';
+import donationRoutes from './routes/donationRoutes.js';
 import { calculateShopStatus } from './utils/shopStatus.js';
+import { startMonthlyCleanupJob } from './utils/monthlyCleanupJob.js';
+import { scheduleMonthlyRewardCleanup } from './utils/cronJobs.js';
 
 // Initialize Express app
 const app = express();
 const server = createServer(app);
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
+
+// Configure trust proxy only when deployed behind a known proxy
+// Using `true` is overly permissive and flagged by express-rate-limit
+const envTrustProxy = process.env.TRUST_PROXY;
+let trustProxySetting;
+if (envTrustProxy === undefined) {
+  trustProxySetting = NODE_ENV === 'production' ? 1 : false;
+} else if (envTrustProxy === 'false' || envTrustProxy === '0') {
+  trustProxySetting = false;
+} else if (/^\d+$/.test(envTrustProxy)) {
+  trustProxySetting = parseInt(envTrustProxy, 10);
+} else {
+  trustProxySetting = envTrustProxy;
+}
+app.set('trust proxy', trustProxySetting);
 
 // Middleware
 const allowedOrigins = [
@@ -215,6 +231,9 @@ const startServer = async () => {
     };
     scheduleCartExpiryCleanup();
 
+    // Start monthly claim history cleanup job
+    startMonthlyCleanupJob();
+
     const scheduleCancelledOrderCleanup = () => {
       const MINUTE_MS = 60 * 1000;
       const retentionHoursRaw = parseFloat(process.env.CANCELLED_ORDER_RETENTION_HOURS || '24');
@@ -314,17 +333,14 @@ const startServer = async () => {
   
   // Public routes (no rate limiting needed for static assets)
   app.use('/api/public', publicRoutes);
-  
-  // Test email route (NO AUTH - for testing only!)
-  // ⚠️ WARNING: Remove this in production!
-  app.use('/api/test-email', testEmailRoutes);
 
   // Routes - only set up after DB connection is established
   // Apply the DB readiness gate to API routes
   app.use('/api', dbReadyGate);
     app.use('/api/auth', authRateLimit, authRoutes);
     app.use('/api/users', userRoutes);
-    app.use('/api/email', emailRoutes);
+  app.use('/api/email', emailRoutes);
+  app.use('/api/email-dispatch', emailDispatchRoutes);
     app.use('/api/locations', locationRoutes);
     app.use('/api/admin', adminRoutes);
     app.use('/api/categories', categoryRoutes);
@@ -336,15 +352,14 @@ const startServer = async () => {
     app.use('/api/time-settings', timeSettingsRoutes);
     app.use('/api/newcart', cartRateLimit, newCartRoutes);
     app.use('/api/payments', paymentRoutes);
-    app.use('/api/twilio', twilioRoutes);
+    
     app.use('/api/stock', stockRoutes);
     app.use('/api/stock-validation', stockValidationRoutes);
-    app.use('/api/analytics', analyticsRoutes);
     app.use('/api/contact', contactRoutes);
     app.use('/api/notifications', notificationRoutes);
     app.use('/api/newsletter', newsletterRoutes);
-    app.use('/api/ngo-media', ngoMediaRoutes);
     app.use('/api/free-product', freeProductRoutes);
+    app.use('/api/donations', donationRoutes);
 
     // WebSocket setup
     const io = new Server(server, {
@@ -447,7 +462,7 @@ const startServer = async () => {
     // Run every 5 seconds for near-real-time UX without excessive load
     setInterval(broadcastShopStatus, 5000);
 
-    // Health check endpoint
+    // Health check endpoint (simple, for keep-alive pings)
     app.get('/health', (req, res) => {
       const dbStatus = dbConnection.getConnectionStatus();
       res.status(200).json({
@@ -459,6 +474,29 @@ const startServer = async () => {
           memory: process.memoryUsage(),
           pid: process.pid
         }
+      });
+    });
+
+    // API health check endpoint (more detailed, for monitoring)
+    app.get('/api/health', (req, res) => {
+      const dbStatus = dbConnection.getConnectionStatus();
+      const memUsage = process.memoryUsage();
+      const isHealthy = dbStatus.isConnected && memUsage.heapUsed < memUsage.heapTotal * 0.9;
+      
+      res.status(isHealthy ? 200 : 503).json({
+        status: isHealthy ? 'healthy' : 'degraded',
+        timestamp: new Date().toISOString(),
+        uptime: Math.floor(process.uptime()),
+        database: {
+          connected: dbStatus.isConnected,
+          status: dbStatus.state
+        },
+        memory: {
+          used: Math.floor(memUsage.heapUsed / 1024 / 1024),
+          total: Math.floor(memUsage.heapTotal / 1024 / 1024),
+          percentage: Math.floor((memUsage.heapUsed / memUsage.heapTotal) * 100)
+        },
+        environment: process.env.NODE_ENV || 'production'
       });
     });
 
@@ -495,6 +533,10 @@ const startServer = async () => {
       console.log(`Server running on port ${PORT}`);
       console.log(`Health check available at http://localhost:${PORT}/health`);
       console.log(`WebSocket server running on port ${PORT}`);
+      
+      // Start monthly reward cleanup cron job
+      scheduleMonthlyRewardCleanup();
+      console.log('✓ Monthly reward cleanup cron job scheduled (runs at 00:01 on 1st of every month)');
     });
 
   } catch (error) {

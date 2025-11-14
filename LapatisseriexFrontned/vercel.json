@@ -1,0 +1,16 @@
+{
+  "rewrites": [
+    {
+      "source": "/sitemap.xml",
+      "destination": "https://la-patisseriex.vercel.app/sitemap.xml"
+    },
+    {
+      "source": "/robots.txt",
+      "destination": "https://la-patisseriex.vercel.app/robots.txt"
+    },
+    { 
+      "source": "/(.*)", 
+      "destination": "/index.html"  
+    }
+  ]
+}

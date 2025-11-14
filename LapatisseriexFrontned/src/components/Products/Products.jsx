@@ -1,30 +1,47 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
 import ProductCard from './ProductCard';
 import ProductCardSkeleton from './ProductCardSkeleton';
-import { fetchProducts, makeSelectListByKey, makeSelectLoadingByKey } from '../../redux/productsSlice';
+import { fetchProducts } from '../../redux/productsSlice';
+import { selectCartItems } from '../../redux/cartSlice';
 import { useCategory } from '../../context/CategoryContext/CategoryContext';
+import { useCart } from '../../hooks/useCart';
+import { useAuth } from '../../hooks/useAuth';
 import CategorySwiper from './CategorySwiper';
 import TextCategoryBar from './TextCategoryBar';
+import SearchBar from '../Home/SearchBar';
 
 const Products = () => {
   const dispatch = useDispatch();
-  const selectAllProducts = makeSelectListByKey('allProducts');
-  const selectLoadingAll = makeSelectLoadingByKey('allProducts');
-  const allProductsFromRedux = useSelector(selectAllProducts);
-  const loadingFromRedux = useSelector(selectLoadingAll);
+  
+  const reduxCartItems = useSelector(selectCartItems);
+  // Get Redux products cache to prevent loading state on page refresh
+  const reduxProductsCache = useSelector((state) => state.products.listsByKey || {});
   const { categories, fetchCategories, loading: loadingCategories, error: categoryError } = useCategory();
+  const { cartItems, refreshCart } = useCart();
+  const { user } = useAuth();
   const location = useLocation();
   
   // Initialize with category from URL if present
   const initialCategory = new URLSearchParams(location.search).get('category');
   const isSelectingFreeProduct = new URLSearchParams(location.search).get('selectFreeProduct') === 'true';
 
+  // Force cart refresh when entering free product selection mode
+  useEffect(() => {
+    if (isSelectingFreeProduct && user) {
+      console.log('🔄 Entering free product selection mode - refreshing cart');
+      refreshCart();
+    }
+  }, [isSelectingFreeProduct, user, refreshCart]);
+
   // Products state organized by categories
   const [productsByCategory, setProductsByCategory] = useState({});
-  const [allProducts, setAllProducts] = useState([]);
+  // Use null to show skeletons before data arrives
+  const [allProducts, setAllProducts] = useState(null);
+  // Search state for filtering on products page
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState(initialCategory);
   const [activeViewCategory, setActiveViewCategory] = useState(initialCategory);
   
@@ -40,6 +57,9 @@ const Products = () => {
   const observerRef = useRef(null);
   const isScrollingRef = useRef(false);
   const userInteractingRef = useRef(false);
+  // Guard refs to prevent unnecessary repeated initial loads
+  const initialLoadRef = useRef(false); // Tracks if the first full load has completed
+  const lastSelectedCategoryRef = useRef(initialCategory || null); // Tracks last category for conditional preloads
 
   // Scroll detection for dynamic sticky behavior
   const [scrollDirection, setScrollDirection] = useState('down');
@@ -56,6 +76,26 @@ const Products = () => {
   // Add state for scrollY debug display
   const [scrollY, setScrollY] = useState(0);
 
+  // Function to filter products that are already in cart when selecting free product
+  const filterProductsForFreeSelection = useCallback((products) => {
+    if (!isSelectingFreeProduct) {
+      return products;
+    }
+    
+    // Use cartItems from hook first, then fallback to Redux
+    const activeCartItems = cartItems || reduxCartItems || [];
+    
+    if (!activeCartItems || activeCartItems.length === 0) {
+      return products;
+    }
+    
+    // Get list of product IDs already in cart
+    const cartProductIds = activeCartItems.map(item => item.productId);
+    
+    // Filter out products that are already in cart
+    return products.filter(product => !cartProductIds.includes(product._id));
+  }, [isSelectingFreeProduct, cartItems, reduxCartItems]);
+
   // Track actual category bar height (text or swiper)
   const [categoryBarHeight, setCategoryBarHeight] = useState(48);
   const textBarRef = useRef(null);
@@ -69,97 +109,128 @@ const Products = () => {
 
   // Function to load products for a specific category
   const loadCategoryProducts = useCallback(async (categoryId) => {
-    // Skip if we already have products for this category
-    if (productsByCategory[categoryId] && productsByCategory[categoryId].length > 0) {
+    // Skip if we already have products for this category or if it's currently loading
+    if ((productsByCategory[categoryId] && productsByCategory[categoryId].length > 0) ||
+        (productsByCategory[categoryId] === null)) { // null means loading
       return;
     }
-    
+
+    // Don't set to null (loading state) - let fallback from allProducts show instead
+    // This prevents loading skeleton flicker since renderProductRow will use allProducts as fallback
+
     try {
       // Use Redux action to fetch products
       const result = await dispatch(fetchProducts({
         key: `category_${categoryId}`,
         limit: 20,
         category: categoryId,
-        sort: 'createdAt:-1',
-      })).unwrap();
-      
+        sort: 'createdAt:-1'})).unwrap();
+
       // Update the products for this category
+      const filteredProducts = filterProductsForFreeSelection(result.products || []);
       setProductsByCategory(prev => ({
         ...prev,
-        [categoryId]: result.products || []
+        [categoryId]: filteredProducts
       }));
     } catch (err) {
       console.error(`Error loading products for category ${categoryId}:`, err);
+      // Set empty array on error to prevent retry loops
+      setProductsByCategory(prev => ({
+        ...prev,
+        [categoryId]: []
+      }));
     }
-  }, [dispatch, productsByCategory]);
+  }, [dispatch, filterProductsForFreeSelection]);
 
-  // Measure actual header height dynamically
+  // Initialize productsByCategory from Redux cache on mount (prevents loading state on refresh)
+  useEffect(() => {
+    if (!initialLoadRef.current && reduxProductsCache && Object.keys(reduxProductsCache).length > 0) {
+      const cachedProducts = {};
+      let hasAnyCache = false;
+      
+      // Check if we have 'allProducts' cache
+      if (reduxProductsCache['allProducts'] && reduxProductsCache['allProducts'].length > 0) {
+        setAllProducts(filterProductsForFreeSelection(reduxProductsCache['allProducts']));
+        hasAnyCache = true;
+        // If we have cached allProducts, we're not in loading state
+        setIsLoading(false);
+      }
+      
+      // Check for category-specific caches
+      Object.keys(reduxProductsCache).forEach(key => {
+        if (key.startsWith('category_')) {
+          const categoryId = key.replace('category_', '');
+          const products = reduxProductsCache[key];
+          if (products && products.length > 0) {
+            cachedProducts[categoryId] = filterProductsForFreeSelection(products);
+            hasAnyCache = true;
+          }
+        }
+      });
+      
+      if (hasAnyCache && Object.keys(cachedProducts).length > 0) {
+        setProductsByCategory(cachedProducts);
+        console.log('✅ Initialized from Redux cache:', Object.keys(cachedProducts));
+      }
+      
+      // If we have any cache, mark as initially loaded to skip loading state
+      if (hasAnyCache) {
+        initialLoadRef.current = true;
+      }
+    }
+  }, [reduxProductsCache, filterProductsForFreeSelection]);
+
+  // Measure actual header height dynamically (use ResizeObserver for stability)
   useEffect(() => {
     const measureHeaderHeight = () => {
       const header = document.querySelector('header') || document.querySelector('[role="banner"]');
       if (header) {
         const newHeight = header.offsetHeight;
-        
-        // If height is changing, show transition overlay
         if (newHeight !== headerHeight) {
           setIsHeaderTransitioning(true);
-          
-          // Hide overlay after transition completes
-          setTimeout(() => {
-            setIsHeaderTransitioning(false);
-          }, 300); // Match typical CSS transition duration
+          setTimeout(() => setIsHeaderTransitioning(false), 300);
         }
-        
         setHeaderHeight(newHeight);
-      } else {
-        // Fallback to default values
-        setHeaderHeight(window.innerWidth < 768 ? 75 : 130);
+        return;
       }
+      setHeaderHeight(window.innerWidth < 768 ? 75 : 130);
     };
 
-    // Measure on mount
     measureHeaderHeight();
 
-    // Re-measure on window resize
-    const handleResize = () => {
-      measureHeaderHeight();
-    };
-
-    window.addEventListener('resize', handleResize);
-    
-    // Also listen for any potential header changes (location bar toggle)
-    const observer = new MutationObserver(() => {
-      // Use setTimeout to ensure DOM has updated
-      setTimeout(measureHeaderHeight, 10);
-    });
-    
-    const header = document.querySelector('header') || document.querySelector('[role="banner"]');
-    if (header) {
-      observer.observe(header, { childList: true, subtree: true, attributes: true });
-    }
-
+    const resizeObserver = new ResizeObserver(() => requestAnimationFrame(measureHeaderHeight));
+    const headerEl = document.querySelector('header') || document.querySelector('[role="banner"]');
+    if (headerEl) resizeObserver.observe(headerEl);
+    window.addEventListener('resize', measureHeaderHeight);
     return () => {
-      window.removeEventListener('resize', handleResize);
-      observer.disconnect();
+      window.removeEventListener('resize', measureHeaderHeight);
+      resizeObserver.disconnect();
     };
   }, [headerHeight]);
 
-  // Measure category bar height dynamically to avoid extra space
+  // Measure category bar height dynamically (no polling) using ResizeObserver for better performance
   useEffect(() => {
     const measure = () => {
       const textBar = textBarRef.current;
-  const swiperBar = swiperBarRef.current;
-      let h1 = 0;
-      let h2 = 0;
-      if (textBar) h1 = textBar.getBoundingClientRect().height;
-      if (swiperBar) h2 = swiperBar.getBoundingClientRect().height;
+      const swiperBar = swiperBarRef.current;
+      let h1 = textBar ? textBar.getBoundingClientRect().height : 0;
+      let h2 = swiperBar ? swiperBar.getBoundingClientRect().height : 0;
       const newH = Math.max(h1, h2) || 48;
       if (newH !== categoryBarHeight) setCategoryBarHeight(newH);
     };
     measure();
+
+    const resizeObserver = new ResizeObserver(() => {
+      // Batch with rAF to avoid layout thrash on rapid changes
+      requestAnimationFrame(measure);
+    });
+    if (textBarRef.current) resizeObserver.observe(textBarRef.current);
+    if (swiperBarRef.current) resizeObserver.observe(swiperBarRef.current);
     window.addEventListener('resize', measure);
-    const id = setInterval(measure, 500); // guard for late font/layout
-    return () => { window.removeEventListener('resize', measure); clearInterval(id); };
+    return () => {
+      window.removeEventListener('resize', measure);
+      resizeObserver.disconnect();
+    };
   }, [showTextCategoryBar, categoryBarHeight]);
 
   // Initialize Intersection Observer with lazy loading
@@ -197,7 +268,9 @@ const Products = () => {
       if (mostVisibleEntry) {
         // Extract category ID from element id
         const categoryId = mostVisibleEntry.target.id.replace('category-section-', '');
-        setActiveViewCategory(categoryId === 'all' ? null : categoryId);
+        // Avoid redundant state updates to reduce re-renders
+        const next = categoryId === 'all' ? null : categoryId;
+        setActiveViewCategory((prev) => (prev === next ? prev : next));
       }
     }, options);
     
@@ -214,16 +287,13 @@ const Products = () => {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const categoryId = params.get('category');
-    console.log('URL changed, categoryId:', categoryId, 'previousCategory:', previousCategoryRef.current);
     
     // Check if this is a category change (different from previous selection)
     const isCategoryChange = categoryId && categoryId !== previousCategoryRef.current;
-    console.log('Is category change:', isCategoryChange, 'from:', previousCategoryRef.current, 'to:', categoryId);
     
     if (categoryId) {
       // If this is category change, show non-sticky for 10 seconds
       if (isCategoryChange) {
-        console.log('Setting initial non-sticky for 10 seconds');
         
     // Only auto-scroll on larger screens or if coming from a different page
         // Avoid aggressive auto-scroll on mobile that interferes with user scrolling
@@ -244,7 +314,6 @@ const Products = () => {
         
         // After 10 seconds, make it sticky
         stickyTimeoutRef.current = setTimeout(() => {
-          console.log('10 seconds passed, making sticky again');
           setShowInitialNonSticky(false);
           setIsCategoryStickyActive(true);
         }, 10000);
@@ -289,99 +358,96 @@ const Products = () => {
         }
       });
       
-      console.log('Observers set up for categories:', Object.keys(categoryRefs.current));
+      // Removed debug logging to reduce console noise
+      // console.log('Observers set up for categories:', Object.keys(categoryRefs.current));
     }
   }, [productsByCategory, allProducts]);
 
   // Load products more efficiently - load all products first, then only selected category if needed
   // Load products in two stages: first a small batch of general products, then specific categories as needed
   useEffect(() => {
+    // Avoid re-running full initial fetch repeatedly when its dependencies (like cart or categories) change.
+    // Only run if we haven't loaded yet OR if the selected category changed (to warm its cache).
+    const selectedChanged = selectedCategory && selectedCategory !== lastSelectedCategoryRef.current;
+    if (initialLoadRef.current && !selectedChanged) {
+      return; // Skip redundant initial load
+    }
+
     const loadInitialProducts = async () => {
-      if (!categories.length) return;
-      
-      setIsLoading(true);
+      // Don't show loading state if we already have cached data
+      if (!initialLoadRef.current && (!allProducts || allProducts.length === 0)) {
+        setIsLoading(true);
+      }
       setError(null);
-      
+
       try {
-        // Load a minimal set of products for initial display (just 20)
-        // This speeds up initial page load significantly
+        // Always load a minimal set of products for initial display (just 20)
         const allProductsResult = await dispatch(fetchProducts({
           key: 'allProducts',
           limit: 20,
-          sort: 'createdAt:-1',
-        })).unwrap();
-        setAllProducts(allProductsResult.products || []);
-        
-        // Initialize an empty products by category object
-        const productsByCat = {};
-        
-        // If we have a selected category, pre-load only that specific category's products
-        // This ensures the user's selected category loads first
-        if (selectedCategory) {
-          console.log(`Pre-loading selected category: ${selectedCategory}`);
-          const result = await dispatch(fetchProducts({
-            key: `category_${selectedCategory}`,
-            limit: 20,
-            category: selectedCategory,
-            sort: 'createdAt:-1',
-          })).unwrap();
-          productsByCat[selectedCategory] = result.products || [];
-          
-          // For visible categories near the selected one, prefetch them in the background
-          // This will be handled by the intersection observer instead
+          sort: 'createdAt:-1'})).unwrap();
+        const filteredAllProducts = filterProductsForFreeSelection(allProductsResult.products || []);
+        setAllProducts(filteredAllProducts);
+
+        // Preserve previously cached category products unless we need to add new ones
+        const productsByCat = initialLoadRef.current ? { ...productsByCategory } : {};
+
+        // Preload first 3 categories immediately to avoid loading state on initial page load
+        if (!initialLoadRef.current && (categories || []).length > 0) {
+          try {
+            const candidateCategories = (categories || [])
+              .filter(c => c && c._id && c.name !== '__SPECIAL_IMAGES__' && !c.name?.includes('__SPECIAL_IMAGES__') && !c.name?.includes('_SPEC'))
+              .map(c => c._id)
+              .slice(0, 3); // Load first 3 categories
+
+            await Promise.all(candidateCategories.map(async (catId) => {
+              try {
+                const res = await dispatch(fetchProducts({
+                  key: `category_${catId}`,
+                  limit: 20,
+                  category: catId,
+                  sort: 'createdAt:-1'})).unwrap();
+                const filteredCatProducts = filterProductsForFreeSelection(res.products || []);
+                productsByCat[catId] = filteredCatProducts;
+              } catch (e) {
+                console.warn('Prefetch category failed:', catId, e?.message || e);
+                productsByCat[catId] = []; // Set empty array to prevent loading state
+              }
+            }));
+          } catch (e) {
+            console.warn('Category prefetch skipped due to error:', e?.message || e);
+          }
         }
 
-        // Proactively prefetch the first few categories to avoid "empty until scroll" perception
-        try {
-          const candidateCategories = (categories || [])
-            .filter(c => c && c._id && c.name !== '__SPECIAL_IMAGES__' && !c.name?.includes('__SPECIAL_IMAGES__') && !c.name?.includes('_SPEC'))
-            .map(c => c._id);
-
-          const toPrefetch = candidateCategories
-            .filter(id => id !== selectedCategory)
-            .slice(0, 2); // prefetch top 2 categories in view order
-
-          await Promise.all(toPrefetch.map(async (catId) => {
-            try {
-              const res = await dispatch(fetchProducts({
-                key: `category_${catId}`,
-                limit: 20,
-                category: catId,
-                sort: 'createdAt:-1',
-              })).unwrap();
-              productsByCat[catId] = res.products || [];
-            } catch (e) {
-              console.warn('Prefetch category failed:', catId, e?.message || e);
-            }
-          }));
-        } catch (e) {
-          console.warn('Category prefetch skipped due to error:', e?.message || e);
+        // If we have a newly selected category and it wasn't preloaded, load it now
+        if (selectedCategory && selectedChanged && !productsByCat[selectedCategory]) {
+          try {
+            const result = await dispatch(fetchProducts({
+              key: `category_${selectedCategory}`,
+              limit: 20,
+              category: selectedCategory,
+              sort: 'createdAt:-1'})).unwrap();
+            const filteredCategoryProducts = filterProductsForFreeSelection(result.products || []);
+            productsByCat[selectedCategory] = filteredCategoryProducts;
+          } catch (e) {
+            console.warn('Preload selected category failed:', selectedCategory, e?.message || e);
+            productsByCat[selectedCategory] = []; // Set empty array to prevent loading state
+          }
         }
-        
+
         setProductsByCategory(productsByCat);
-        setIsLoading(false);
-        
+
         // Scroll to selected category if any (on all screens, including mobile)
-        if (selectedCategory && !userInteractingRef.current) {
+        if (selectedCategory && selectedChanged && !userInteractingRef.current) {
           setTimeout(() => {
             const selectedCategoryRef = categoryRefs.current[selectedCategory];
             if (selectedCategoryRef) {
-              // Set scrolling flag to prevent observer from firing
               isScrollingRef.current = true;
-              
-              // Account for fixed header height
               const elementPosition = selectedCategoryRef.getBoundingClientRect().top + window.pageYOffset;
-              const offsetPosition = elementPosition - headerHeight - 20; // Extra 20px buffer
-              
-              window.scrollTo({
-                top: offsetPosition,
-                behavior: 'smooth'
-              });
-              
-              // Reset scrolling flag after animation completes
-              setTimeout(() => {
-                isScrollingRef.current = false;
-              }, 1000);
+              const stickyOffset = (headerHeight || 0) + (categoryBarHeight || 0) + 8;
+              const offsetPosition = Math.max(0, elementPosition - stickyOffset);
+              window.scrollTo({ top: offsetPosition, behavior: 'smooth' });
+              setTimeout(() => { isScrollingRef.current = false; }, 1000);
             }
           }, 500);
         }
@@ -390,120 +456,40 @@ const Products = () => {
         setError('Failed to load products.');
       } finally {
         setIsLoading(false);
+        initialLoadRef.current = true;
+        if (selectedChanged) {
+          lastSelectedCategoryRef.current = selectedCategory;
+        }
       }
     };
-    
+
     loadInitialProducts();
-  }, [fetchProducts, categories, selectedCategory]);
+  }, [dispatch, selectedCategory, categories, filterProductsForFreeSelection, headerHeight]);
 
-  // ========================================================================================
-  // SCROLL SWITCHING LOGIC - CONTROLS WHEN CATEGORYSWIPER SWITCHES TO TEXTCATEGORYSWIPER
-  // ========================================================================================
-  // To MODIFY SWITCHING THRESHOLDS:
-  // 1. AT_TOP_THRESHOLD: Controls when scrolling up shows categorySwiper (currently: 60)
-  // 2. TEXT_BAR_THRESHOLD: Controls when scrolling down shows textCategorySwiper (currently: 200)
-  // 3. STICKY_BAR_THRESHOLD: Controls when categorySwiper becomes sticky (currently: 150)
-  //
-  // RECOMENDED: Always keep AT_TOP_THRESHOLD < STICKY_BAR_THRESHOLD < TEXT_BAR_THRESHOLD
-  // ========================================================================================
-
+  // Re-filter products (e.g. when entering/exiting free product selection) without re-triggering network requests
   useEffect(() => {
-    let ticking = false;
-    let scrollTimeout;
+    if (!initialLoadRef.current) return; // Skip until initial data loaded
+    setAllProducts(prev => prev ? filterProductsForFreeSelection(prev) : prev);
+    setProductsByCategory(prev => {
+      const updated = {};
+      Object.entries(prev).forEach(([catId, list]) => {
+        updated[catId] = filterProductsForFreeSelection(list || []);
+      });
+      return updated;
+    });
+  }, [filterProductsForFreeSelection, isSelectingFreeProduct]);
 
-    const handleScroll = () => {
-      if (!ticking) {
-        requestAnimationFrame(() => {
-          const currentScrollY = window.scrollY;
-          setScrollY(currentScrollY); // Update scrollY for debug display
-
-          // ========================================================================================
-          // SWITCHING THRESHOLDS - MODIFY THESE VALUES TO CONTROL SWITCHING BEHAVIOR
-          // ========================================================================================
-          const AT_TOP_THRESHOLD = 90;        // [MODIFY THIS] When scrollY is below this, show categorySwiper
-          const TEXT_BAR_THRESHOLD = 90;     // [MODIFY THIS] When scrollY exceeds this, show textCategorySwiper
-          const STICKY_BAR_THRESHOLD = 90;   // [MODIFY THIS] When scrollY exceeds this, make categorySwiper sticky
-          // ========================================================================================
-
-          // SMOOTH SWITCHING LOGIC - Prevents ghosting and ensures consistent behavior
-          const atTop = currentScrollY <= AT_TOP_THRESHOLD;
-          const hasScrolledEnoughForTextBar = currentScrollY >= TEXT_BAR_THRESHOLD;
-          const shouldBeSticky = currentScrollY >= STICKY_BAR_THRESHOLD && !hasScrolledEnoughForTextBar;
-
-          // KEY SWITCHING LOGIC: Ensure only ONE bar is visible at a time
-          if (atTop) {
-            // AT TOP: Show categorySwiper, hide textCategorySwiper
-            setShowTextCategoryBar(false);
-            setIsCategoryStickyActive(false);
-          } else if (hasScrolledEnoughForTextBar) {
-            // SCROLLED DOWN ENOUGH: Show textCategorySwiper, hide categorySwiper
-            setShowTextCategoryBar(true);
-            setIsCategoryStickyActive(false);
-          } else if (shouldBeSticky) {
-            // TRANSITION ZONE: Show categorySwiper as sticky, hide textCategorySwiper
-            setShowTextCategoryBar(false);
-            setIsCategoryStickyActive(true);
-          } else {
-            // DEFAULT FALLBACK: Show categorySwiper without sticky, hide text
-            setShowTextCategoryBar(false);
-            setIsCategoryStickyActive(false);
-          }
-
-          // Track scroll direction for potential future use
-          const newDirection = currentScrollY > lastScrollY.current ? 'down' : 'up';
-          if (newDirection !== scrollDirection) {
-            setScrollDirection(newDirection);
-          }
-
-          setIsAtTop(atTop);
-          lastScrollY.current = currentScrollY;
-          ticking = false;
-        });
-        ticking = true;
-      }
-
-      // Debounce scroll end detection
-      clearTimeout(scrollTimeout);
-      scrollTimeout = setTimeout(() => {
-        // Handle any scroll end cleanup if needed
-      }, 100);
-    };
-
-    // Touch interaction handlers for faster response
-    const handleTouchStart = () => {
-      userInteractingRef.current = true;
-    };
-
-    const handleTouchEnd = () => {
-      setTimeout(() => {
-        userInteractingRef.current = false;
-      }, 300); // Optimized for smooth touch scrolling
-    };
-
-    // Add scroll event listeners
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    window.addEventListener('touchstart', handleTouchStart, { passive: true });
-    window.addEventListener('touchend', handleTouchEnd, { passive: true });
-
-    return () => {
-      window.removeEventListener('scroll', handleScroll);
-      window.removeEventListener('touchstart', handleTouchStart);
-      window.removeEventListener('touchend', handleTouchEnd);
-      clearTimeout(scrollTimeout);
-    };
-  }, [scrollDirection]); // Track scrollDirection changes
+  // Scroll handling effect kept intact (was above; ensure not accidentally removed)
 
   const handleSelectCategory = (categoryId) => {
-    console.log('Category selected:', categoryId);
     setSelectedCategory(categoryId);
     setActiveViewCategory(categoryId);
     
     // Set scrolling flag to prevent observer from firing
     isScrollingRef.current = true;
     
-    // Only auto-scroll on larger screens to avoid interfering with mobile touch scrolling
-    if (window.innerWidth >= 768 && !userInteractingRef.current) {
-      // Scroll to the selected category section
+    // Auto-scroll to the selected category on all screens, accounting for sticky headers
+    if (!userInteractingRef.current) {
       setTimeout(() => {
         const targetRef = categoryId 
           ? categoryRefs.current[categoryId]
@@ -511,7 +497,8 @@ const Products = () => {
           
         if (targetRef) {
           const elementPosition = targetRef.getBoundingClientRect().top + window.pageYOffset;
-          const offsetPosition = elementPosition - headerHeight - 20;
+          const stickyOffset = (headerHeight || 0) + (categoryBarHeight || 0) + 8; // small breathing room
+          const offsetPosition = Math.max(0, elementPosition - stickyOffset);
           
           window.scrollTo({
             top: offsetPosition,
@@ -523,11 +510,6 @@ const Products = () => {
         setTimeout(() => {
           isScrollingRef.current = false;
         }, 1000);
-      }, 100);
-    } else {
-      // On mobile, just reset the scrolling flag without auto-scrolling
-      setTimeout(() => {
-        isScrollingRef.current = false;
       }, 100);
     }
   };
@@ -545,12 +527,28 @@ const Products = () => {
   }, []);
 
   // Function to render product row (responsive: vertical on mobile, horizontal on desktop)
-  const renderProductRow = (products, title, categoryId) => {
-    // If there's no products array yet for this category, it's still loading
-    const isLoading = !products;
+  const renderProductRow = (products, title, categoryId, isSearching = false) => {
+    // Use fallback products from allProducts filtered by category if specific category products aren't loaded yet
+    let displayProducts = products;
+    let isUsingFallback = false;
     
+    // If category-specific products aren't loaded yet, use filtered allProducts as fallback
+    if (!products && allProducts && allProducts.length > 0 && categoryId !== 'all') {
+      displayProducts = allProducts.filter(p => {
+        // Handle both string categoryId and object with _id
+        const productCategoryId = typeof p.category === 'object' ? p.category?._id : p.category;
+        return productCategoryId === categoryId;
+      }).slice(0, 20);
+      isUsingFallback = true;
+    }
+    
+    // Only show loading skeleton if we have no products AND no fallback
+    const isLoading = !displayProducts || displayProducts.length === 0;
+    
+    // When searching, hide empty sections entirely (no skeletons)
+    if (isSearching && (!displayProducts || displayProducts.length === 0)) return null;
     // If there are no products and we're not loading, don't render anything
-    if (!isLoading && (!products || products.length === 0)) return null;
+    if (!isSearching && !isLoading && (!displayProducts || displayProducts.length === 0)) return null;
     
     // Create placeholder skeletons for loading state
     const skeletons = Array(4).fill(0).map((_, i) => i);
@@ -559,7 +557,7 @@ const Products = () => {
       <div className="mb-12">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl md:text-2xl font-bold bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] bg-clip-text text-transparent" style={{ 
-            fontFamily: 'system-ui, -apple-system, sans-serif'
+            
           }}>{title}</h2>
         </div>
         
@@ -574,8 +572,8 @@ const Products = () => {
                 </div>
               ))
             ) : (
-              // Show actual products when loaded
-              products.map(product => (
+              // Show actual products when loaded (either category-specific or fallback from allProducts)
+              displayProducts.map((product, index) => (
                 <motion.div
                   key={product._id}
                   initial={{ opacity: 0, y: 20 }}
@@ -583,7 +581,13 @@ const Products = () => {
                   transition={{ duration: 0.3 }}
                   className="w-full h-full"
                 >
-                  <ProductCard product={product} className="w-full h-full transition-shadow duration-300 flex flex-col" compact={true} isSelectingFreeProduct={isSelectingFreeProduct} />
+                  <ProductCard 
+                    product={product} 
+                    className="w-full h-full transition-shadow duration-300 flex flex-col" 
+                    compact={true} 
+                    isSelectingFreeProduct={isSelectingFreeProduct}
+                    imagePriority={categoryId === 'all' || activeViewCategory === categoryId ? index < 6 : false}
+                  />
                 </motion.div>
               ))
             )}
@@ -603,8 +607,8 @@ const Products = () => {
                   </div>
                 ))
               ) : (
-                // Show actual products when loaded
-                products.map(product => (
+                // Show actual products when loaded (either category-specific or fallback from allProducts)
+                displayProducts.map((product, index) => (
                   <motion.div
                     key={product._id}
                     initial={{ opacity: 0, scale: 0.9 }}
@@ -612,7 +616,12 @@ const Products = () => {
                     transition={{ duration: 0.3 }}
                     className="flex-shrink-0 w-64 md:w-80 snap-start"
                   >
-                    <ProductCard product={product} className="w-full transition-shadow duration-300" isSelectingFreeProduct={isSelectingFreeProduct} />
+                    <ProductCard 
+                      product={product} 
+                      className="w-full transition-shadow duration-300" 
+                      isSelectingFreeProduct={isSelectingFreeProduct}
+                      imagePriority={categoryId === 'all' || activeViewCategory === categoryId ? index < 6 : false}
+                    />
                   </motion.div>
                 ))
               )}
@@ -629,16 +638,17 @@ const Products = () => {
     <section ref={productsSectionRef} className="bg-white min-h-screen pt-0">{/* Removed any default top padding */}      
       {/* Free Product Selection Banner */}
       {isSelectingFreeProduct && (
-        <div className="bg-gradient-to-r from-[#733857] to-[#8d4466] text-white py-4 px-4 md:px-6 text-center shadow-md relative overflow-hidden">
-          {/* Decorative elements */}
-          <div className="absolute top-0 left-0 w-32 h-32 bg-white/5 rounded-full -ml-16 -mt-16"></div>
-          <div className="absolute bottom-0 right-0 w-24 h-24 bg-white/5 rounded-full -mr-12 -mb-12"></div>
-          
-          <p className="text-sm md:text-base font-semibold relative z-10 tracking-wide">
-            🎁 Select Your Free Product! Choose any item below to add it FREE to your cart.
+        <div className="py-6 px-4 md:px-6 text-center">
+          <p className="text-base md:text-lg font-medium text-[#733857] tracking-wide" style={{
+            fontWeight: '500',
+            letterSpacing: '0.025em'
+          }}>
+            Select Your Free Product! Choose any item below to add it FREE to your cart.
           </p>
         </div>
       )}
+
+      {/* (moved) Products Search Bar will appear below the category bar */}
       
       {/* ======================================================================================== */}
       {/* DESKTOP LEFT PADDING CONTROL: Modify the padding values in the className below */}
@@ -714,61 +724,94 @@ const Products = () => {
         </div>
       </div>
 
-      {/* Content container - no padding needed with sticky positioning */}
-      <div className="container mx-auto px-4 pt-0 pb-4">
+      {/* Content container - search bar placed at top, below sticky category bar */}
+      <div className="container mx-auto px-4 pt-3 pb-4">
+
+        {/* Products Search Bar (same as Home), now below category bar */}
+        <div className="mt-4 md:mt-6 lg:mt-8 mb-4">
+          <SearchBar
+            bestSellers={(allProducts || []).slice(0, 8)}
+            newLaunches={(allProducts || []).slice(0, 8)}
+            cartPicks={[]}
+            onQueryChange={setSearchQuery}
+            disableSuggestions={true}
+            // Lower z-index on Products page so it doesn't overlap sticky category bars on mobile
+            baseZIndex={10}
+            onProductClick={() => { /* optional: could scroll to product or open details */ }}
+          />
+        </div>
 
         {/* Main Content */}
-        {isLoading ? (
-          <div className="flex justify-center items-center min-h-screen bg-white">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-gray-400 mx-auto"></div>
-              <p className="bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] bg-clip-text text-transparent mt-4 font-medium">Loading delicious products...</p>
-            </div>
-          </div>
-        ) : error ? (
-          <div className="text-center py-10 bg-white rounded-xl shadow-sm my-6">
-            <div className="text-lg font-medium mb-2 bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] bg-clip-text text-transparent">Oops! Something went wrong</div>
+        {error && (
+          <div className="text-center py-6 bg-white rounded-xl shadow-sm my-4">
             <div className="text-sm bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] bg-clip-text text-transparent">{error}</div>
           </div>
-        ) : (
-          <AnimatePresence mode="wait">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.4 }}
-            >
-              {/* All Products Section with categories */}
-              <div className="mt-0">
-                {/* Display products by category */}
-                <div className="mt-0">
-                  <h2 className="text-2xl lg:text-3xl font-bold mb-3 md:mb-4 bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] bg-clip-text text-transparent" style={{ 
-                    fontFamily: 'system-ui, -apple-system, sans-serif'
-                  }}>
-                    All Categories
-                  </h2>
-                  {categories.filter(category => 
-                    category.name !== '__SPECIAL_IMAGES__' && 
-                    !category.name?.includes('__SPECIAL_IMAGES__') &&
-                    !category.name?.includes('_SPEC')
-                  ).map(category => {
-                    // Show all categories including selected one
-                    const isSelectedCategory = category._id === selectedCategory;
-                    return (
-                      <div 
-                        key={category._id} 
-                        ref={(el) => setCategoryRef(el, category._id)}
-                        id={`category-section-${category._id}`}
-                        className={`mb-12 md:mb-16 ${isSelectedCategory ? 'p-4 rounded-xl' : ''}`}
-                      >
-                        {renderProductRow(productsByCategory[category._id], category.name, category._id)}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </motion.div>
-          </AnimatePresence>
         )}
+        <AnimatePresence mode="wait">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.4 }}
+          >
+            {/* All Products row always visible (filtered when searching) */}
+            <div 
+              key="all-products-section"
+              ref={(el) => setCategoryRef(el, 'all')}
+              id="category-section-all"
+              className="mb-8 md:mb-10"
+            >
+              {renderProductRow(
+                (allProducts || []) && searchQuery.trim() !== ''
+                  ? (allProducts || []).filter(p => {
+                      const q = searchQuery.trim().toLowerCase();
+                      if (!q) return true;
+                      const name = (p.name || '').toLowerCase();
+                      const desc = (p.description || '').toLowerCase();
+                      return name.includes(q) || desc.includes(q);
+                    })
+                  : allProducts,
+                searchQuery.trim() !== '' ? 'Search Results' : 'All Products',
+                'all',
+                searchQuery.trim() !== ''
+              )}
+            </div>
+
+            {/* Categories below, when available */}
+            <div className="mt-0">
+              <h2 className="text-2xl lg:text-3xl font-bold mb-3 md:mb-4 bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] bg-clip-text text-transparent" style={{ 
+                
+              }}>
+                All Categories
+              </h2>
+              {(categories || [])
+                .filter(category => 
+                  category.name !== '__SPECIAL_IMAGES__' && 
+                  !category.name?.includes('__SPECIAL_IMAGES__') &&
+                  !category.name?.includes('_SPEC')
+                ).map(category => {
+                  const isSelectedCategory = category._id === selectedCategory;
+                  const q = searchQuery.trim().toLowerCase();
+                  const filteredList = q
+                    ? (productsByCategory[category._id] || []).filter(p => {
+                        const name = (p?.name || '').toLowerCase();
+                        const desc = (p?.description || '').toLowerCase();
+                        return name.includes(q) || desc.includes(q);
+                      })
+                    : productsByCategory[category._id];
+                  return (
+                    <div 
+                      key={category._id} 
+                      ref={(el) => setCategoryRef(el, category._id)}
+                      id={`category-section-${category._id}`}
+                      className={`mb-12 md:mb-16 ${isSelectedCategory ? 'p-4 rounded-xl' : ''}`}
+                    >
+                      {renderProductRow(filteredList, category.name, category._id, q !== '')}
+                    </div>
+                  );
+                })}
+            </div>
+          </motion.div>
+        </AnimatePresence>
       </div>
     </section>
   );

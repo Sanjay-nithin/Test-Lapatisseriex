@@ -13,8 +13,12 @@ const userSchema = new mongoose.Schema(
     },
     email: {
       type: String,
-      required: true,
+      required: function() {
+        // Email is not required if user signed up with phone only
+        return !this.phone || this.phoneVerified === false;
+      },
       unique: true,
+      sparse: true, // Allow multiple null values
       trim: true,
       lowercase: true,
     },
@@ -166,7 +170,20 @@ const userSchema = new mongoose.Schema(
     freeProductUsed: {
       type: Boolean,
       default: false
-    }
+    },
+    freeProductClaimHistory: [{
+      productId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Product'
+      },
+      productName: String,
+      claimedAt: {
+        type: Date,
+        default: Date.now
+      },
+      month: String, // Format: "YYYY-MM"
+      orderNumber: String
+    }]
   },
   {
     timestamps: true,

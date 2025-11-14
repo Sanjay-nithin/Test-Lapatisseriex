@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+﻿import React, { useEffect, useState, useMemo } from 'react';
 import { useDispatch } from 'react-redux';
 import { useCart } from '../../hooks/useCart';
 
@@ -52,6 +52,12 @@ const CartPickedForYou = () => {
 
   useEffect(() => {
     const loadSmartRecommendations = async () => {
+      // Set a timeout to prevent infinite loading
+      const loadingTimeout = setTimeout(() => {
+        console.warn('⏱️ CartPickedForYou loading timeout - stopping loader');
+        setLoading(false);
+      }, 5000); // 5 second timeout
+
       try {
         setLoading(true);
 
@@ -59,6 +65,7 @@ const CartPickedForYou = () => {
         if (!user || !cartAnalysis.hasItems) {
           setRecommendedProducts([]);
           setLoading(false);
+          clearTimeout(loadingTimeout);
           return;
         }
 
@@ -169,18 +176,20 @@ const CartPickedForYou = () => {
         
         setRecommendedProducts(recommendations);
         setRecommendationType(recType);
+        clearTimeout(loadingTimeout);
         
       } catch (err) {
         console.error("Error loading smart recommendations:", err);
         setRecommendedProducts([]);
         setRecommendationType('');
+        clearTimeout(loadingTimeout);
       } finally {
         setLoading(false);
       }
     };
 
     loadSmartRecommendations();
-  }, [cartAnalysis, dispatch, user, recentlyViewed]);
+  }, [cartAnalysis, dispatch, user, recentlyViewed, categories]);
 
   // Don't render section if no cart items, or no recommendations
   if (!cartAnalysis.hasItems || (recommendedProducts.length === 0 && !loading)) {
@@ -203,7 +212,7 @@ const CartPickedForYou = () => {
   }
 
   return (
-    <section className="w-full py-0 md:py-6 bg-white" style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+    <section className="w-full py-0 md:py-6 bg-white" style={{  }}>
       <div className="max-w-screen-xl mx-auto px-4 pt-6 pb-6 md:pt-0 md:pb-0">
         <div className="mb-8">
           <h2 className="text-2xl font-light tracking-wide text-left text-[#733857]">

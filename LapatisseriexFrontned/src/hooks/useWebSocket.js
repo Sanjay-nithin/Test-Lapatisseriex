@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+﻿import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
+import { getWebSocketBaseUrl, getSocketOptions } from '../utils/websocketUrl.js';
 
 const useWebSocket = () => {
   const [isConnected, setIsConnected] = useState(false);
@@ -8,16 +9,10 @@ const useWebSocket = () => {
 
   useEffect(() => {
     // Get API URL from environment
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-    
-    // Initialize socket connection
-    socketRef.current = io(apiUrl, {
-      autoConnect: true,
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-      timeout: 20000,
-    });
+    const apiUrl = getWebSocketBaseUrl();
+    console.log('[useWebSocket] WS base:', apiUrl);
+
+    socketRef.current = io(apiUrl, getSocketOptions({ autoConnect: true }));
 
     const socket = socketRef.current;
 

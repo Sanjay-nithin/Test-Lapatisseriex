@@ -9,15 +9,14 @@ import Hostel from '../models/hostelModel.js';
 import DeliveryLocationMapping from '../models/deliveryLocationMappingModel.js';
 import mongoose from 'mongoose';
 import Payment from '../models/paymentModel.js';
+import Donation from '../models/donationModel.js';
 import Notification from '../models/notificationModel.js';
 import {
-  sendOrderStatusNotification,
-  sendOrderConfirmationEmail,
-  sendOrderPlacedAdminNotification
+  sendOrderStatusNotification
 } from '../utils/orderEmailService.js';
-import { getLogoData } from '../utils/logoUtils.js';
-import { getActiveAdminEmails } from '../utils/adminUtils.js';
+import { getEmailDelegateApiBase, isDelegationEnabled, delegateEmailPost } from '../utils/emailDelegator.js';
 import { createNotification } from './notificationController.js';
+import { emitPaymentUpdate } from '../utils/socketEvents.js';
 import { resolveVariantInfoForItem } from '../utils/variantUtils.js';
 import NewCart from '../models/newCartModel.js';
 import { trackOrderDay, markFreeProductUsed } from '../middleware/freeProductMiddleware.js';
@@ -376,11 +375,13 @@ export const createOrder = asyncHandler(async (req, res) => {
       userDetails,
       deliveryLocation,
       hostelName,
-      orderSummary 
+      orderSummary,
+      donationDetails
     } = req.body;
 
     console.log('Creating order with amount:', amount, 'Payment method:', paymentMethod);
     console.log('Hostel name received:', hostelName);
+    console.log('Donation details received:', donationDetails);
     console.log('User from request:', { uid: req.user?.uid, _id: req.user?._id });
     console.log('Cart items received:', JSON.stringify(cartItems, null, 2));
 
@@ -523,43 +524,107 @@ export const createOrder = asyncHandler(async (req, res) => {
       }
     }));
 
-    // Create order in database
-    // For online payments: Set orderStatus to 'pending' until payment is verified
-    // For COD: Set orderStatus to 'placed' immediately since payment is guaranteed
-    const order = new Order({
-      orderNumber,
-      userId,
-      razorpayOrderId: razorpayOrder?.id || null,
-      amount: amount / 100, // Convert back to rupees for storage
-      currency,
-      paymentMethod,
-      paymentStatus: paymentMethod === 'cod' ? 'pending' : 'created',
-      orderStatus: paymentMethod === 'cod' ? 'placed' : 'pending', // ✅ Don't mark as 'placed' until payment verified
-      cartItems: normalizedCartItems,
-      userDetails,
-      deliveryLocation,
-      hostelName,
-      hostelId,
-      orderSummary: {
-        cartTotal: orderSummary.cartTotal,
-        discountedTotal: orderSummary.discountedTotal,
-        deliveryCharge: orderSummary.deliveryCharge,
-        taxAmount: orderSummary.taxAmount,
-        couponDiscount: orderSummary.couponDiscount || 0,
-        grandTotal: orderSummary.grandTotal
-      },
-      estimatedDeliveryTime: new Date(Date.now() + 45 * 60 * 1000) // 45 minutes from now
-    });
+    // For online payments: do NOT create the Order now. Persist a Payment intent with checkout snapshot.
+    // For COD: create the Order immediately.
+    let order = null;
+    if (paymentMethod === 'cod') {
+      order = new Order({
+        orderNumber,
+        userId,
+        razorpayOrderId: razorpayOrder?.id || null,
+        amount: amount / 100, // Convert back to rupees for storage
+        currency,
+        paymentMethod,
+        paymentStatus: 'pending',
+        orderStatus: 'placed',
+        cartItems: normalizedCartItems,
+        userDetails,
+        deliveryLocation,
+        hostelName,
+        hostelId,
+        orderSummary: {
+          cartTotal: orderSummary.cartTotal,
+          discountedTotal: orderSummary.discountedTotal,
+          deliveryCharge: orderSummary.deliveryCharge,
+          taxAmount: orderSummary.taxAmount,
+          couponDiscount: orderSummary.couponDiscount || 0,
+          grandTotal: orderSummary.grandTotal
+        },
+        estimatedDeliveryTime: new Date(Date.now() + 45 * 60 * 1000)
+      });
+      await order.save();
+      console.log('Order saved to database:', order._id);
+      console.log('Order hostelName stored:', order.hostelName);
+    } else {
+      // Persist a pending payment intent with full checkout snapshot; no Order is created yet
+      try {
+        await Payment.create({
+          userId,
+          email: userDetails?.email,
+          orderId: orderNumber, // our app order number for traceability
+          amount: amount / 100,
+          paymentMethod: 'razorpay',
+          paymentStatus: 'pending',
+          date: new Date(),
+          seatCount: Array.isArray(cartItems) ? cartItems.reduce((a, c) => a + (c.quantity || 0), 0) : undefined,
+          gatewayOrderId: razorpayOrder?.id,
+          meta: {
+            checkoutSnapshot: {
+              orderNumber,
+              userId,
+              currency,
+              cartItems: normalizedCartItems,
+              userDetails,
+              deliveryLocation,
+              hostelName,
+              hostelId,
+              orderSummary,
+              donationDetails
+            },
+            source: 'createOrder'
+          }
+        });
+        console.log('📝 Stored payment intent with checkout snapshot for online payment:', orderNumber);
+      } catch (persistIntentErr) {
+        console.error('Failed to persist payment intent:', persistIntentErr?.message || persistIntentErr);
+      }
+    }
 
-    await order.save();
-    console.log('Order saved to database:', order._id);
-    console.log('Order hostelName stored:', order.hostelName);
+    // 💝 Track donation: For online payments, defer until payment is verified. For COD, persist now.
+    if (donationDetails && donationDetails.donationAmount > 0) {
+      if (paymentMethod === 'cod' && order) {
+        try {
+          const donation = new Donation({
+            userId,
+            userEmail: userDetails.email,
+            userName: userDetails.name,
+            userPhone: userDetails.phone,
+            donationAmount: donationDetails.donationAmount,
+            orderId: order._id,
+            orderNumber,
+            paymentMethod,
+            paymentStatus: 'completed',
+            initiativeName: donationDetails.initiativeName || 'கற்பிப்போம் பயிலகம் - Education Initiative',
+            initiativeDescription: donationDetails.initiativeDescription || 'Supporting student education and learning resources',
+            deliveryLocation,
+            hostelName
+          });
+          await donation.save();
+          console.log('✅ Donation tracked (COD):', { donationAmount: donationDetails.donationAmount, orderNumber, paymentMethod, userId });
+        } catch (donationError) {
+          console.error('❌ Failed to track donation (COD):', donationError);
+        }
+      } else {
+        console.log('💡 Online payment: donation tracking deferred until payment verification');
+      }
+    }
+
     console.log('Starting notification creation for user:', userId, 'order:', orderNumber);
 
     // ⚠️ DO NOT CREATE NOTIFICATION FOR ONLINE PAYMENTS YET
     // For online payments, we'll send notification only after successful payment verification
     // For COD, send notification immediately since payment is confirmed at placement
-    if (paymentMethod === 'cod') {
+  if (paymentMethod === 'cod') {
       try {
         // Check if notification already exists for this order
         const existingNotification = await Notification.findOne({
@@ -616,10 +681,15 @@ export const createOrder = asyncHandler(async (req, res) => {
         console.log('📅 Order day tracked:', trackingResult);
         
         // Check if order has free product and mark it as used
-        const hasFreeProduct = cartItems.some(item => item.isFreeProduct);
-        if (hasFreeProduct) {
-          await markFreeProductUsed(userId);
-          console.log('🎁 Free product reward used');
+        const freeProductItem = cartItems.find(item => item.isFreeProduct);
+        if (freeProductItem) {
+          await markFreeProductUsed(
+            userId,
+            freeProductItem.productId,
+            freeProductItem.productName || freeProductItem.name,
+            orderNumber
+          );
+          console.log('🎁 Free product reward used - NO MORE this month');
         }
       } catch (trackError) {
         console.error('Error tracking order day:', trackError);
@@ -628,14 +698,14 @@ export const createOrder = asyncHandler(async (req, res) => {
     }
 
     // After COD order creation, remove the user's cart document immediately
-    if (paymentMethod === 'cod') {
+  if (paymentMethod === 'cod') {
       await removeUserCart({ uid: req.user?.uid, _id: userId });
     }
 
     // For COD orders, create a pending Payment record so admin can track it
-    if (paymentMethod === 'cod') {
+  if (paymentMethod === 'cod') {
       try {
-        await Payment.create({
+        const paymentDoc = await Payment.create({
           userId,
           email: userDetails?.email,
           orderId: orderNumber,
@@ -647,6 +717,10 @@ export const createOrder = asyncHandler(async (req, res) => {
           meta: { source: 'createOrder' }
         });
         console.log('Created pending payment record for COD order:', orderNumber);
+
+        emitPaymentUpdate(paymentDoc, {
+          source: 'cod_order_created'
+        });
       } catch (e) {
         console.error('Failed to create COD payment record:', e.message);
       }
@@ -681,68 +755,6 @@ export const createOrder = asyncHandler(async (req, res) => {
         console.error('❌ Error emitting WebSocket event for new order:', wsError);
       }
 
-      // Send emails asynchronously in parallel (customer and admin simultaneously) - Execute immediately
-      (async () => {
-        try {
-          console.log('═══════════════════════════════════════════════════════════════');
-          console.log('🎯 [PAYMENT CONTROLLER] COD Order Created - Triggering Emails');
-          console.log('📦 Order Number:', order.orderNumber);
-          console.log('═══════════════════════════════════════════════════════════════');
-          
-          const user = await User.findById(userId).select('email name phone');
-          const orderDetailsForEmail = buildOrderDetailsForEmail(order, user);
-
-          const userEmailTarget = user?.email || orderDetailsForEmail?.userDetails?.email;
-          
-          // Send both customer and admin emails in parallel
-          const emailPromises = [];
-          
-          // Customer email
-          if (userEmailTarget) {
-            console.log('📧 [PAYMENT CONTROLLER] Calling sendOrderConfirmationEmail()');
-            console.log('✉️  Target:', userEmailTarget);
-            const logoData = getLogoData();
-            emailPromises.push(
-              sendOrderConfirmationEmail(orderDetailsForEmail, userEmailTarget, logoData)
-                .then(result => {
-                  if (result.success) {
-                    console.log('✅ [PAYMENT CONTROLLER] Customer email sent:', result.messageId);
-                  } else {
-                    console.error('❌ [PAYMENT CONTROLLER] Customer email failed:', result.error);
-                  }
-                  return result;
-                })
-            );
-          } else {
-            console.log('⚠️ User email not found, skipping confirmation email');
-          }
-
-          // Admin email
-          const adminEmails = await getActiveAdminEmails();
-          if (Array.isArray(adminEmails) && adminEmails.length > 0) {
-            console.log('📧 Sending admin notification email...');
-            emailPromises.push(
-              sendOrderPlacedAdminNotification(orderDetailsForEmail, adminEmails)
-                .then(result => {
-                  if (result.success) {
-                    console.log('✅ Admin new-order email sent:', result.messageId);
-                  } else if (!result.skipped) {
-                    console.error('❌ Failed to send admin new-order email:', result.error);
-                  }
-                  return result;
-                })
-            );
-          } else {
-            console.log('⚠️ No admin recipients configured; skipping admin order email');
-          }
-          
-          // Wait for all emails to complete
-          await Promise.all(emailPromises);
-          
-        } catch (emailError) {
-          console.error('❌ Error sending order placement emails (async):', emailError.message);
-        }
-      })().catch(err => console.error('❌ Email sending error:', err));
     }
 
     // Return response
@@ -814,48 +826,105 @@ export const verifyPayment = asyncHandler(async (req, res) => {
     const isAuthentic = expectedSignature === razorpay_signature;
 
     if (isAuthentic) {
-      // ✅ ATOMIC UPDATE: Use findOneAndUpdate with conditions to prevent race conditions
-      const order = await Order.findOneAndUpdate(
-        { 
-          razorpayOrderId: razorpay_order_id,
-          paymentStatus: { $in: ['created', 'pending'] } // Only update if not already paid
-        },
-        { 
-          paymentStatus: 'paid',
-          razorpayPaymentId: razorpay_payment_id,
-          orderStatus: 'placed' // ✅ NOW mark as 'placed' after payment is verified
-        },
-        { new: true }
-      );
-
+      // Try to find an existing order (legacy flow). If not found, create from Payment intent snapshot.
+      let order = await Order.findOne({ razorpayOrderId: razorpay_order_id });
       if (!order) {
-        // Check if order exists but already paid
-        const existingOrder = await Order.findOne({ razorpayOrderId: razorpay_order_id });
-        if (existingOrder && existingOrder.paymentStatus === 'paid') {
-          console.log('⚠️ Order already paid:', existingOrder.orderNumber);
-          await ensureOrderPlacedNotification(existingOrder, { forceEmit: true });
-          return res.json({
-            success: true,
-            message: 'Payment already verified',
-            orderNumber: existingOrder.orderNumber,
-            paymentId: razorpay_payment_id,
-            orderId: razorpay_order_id,
-          });
+        // Create order from stored payment intent snapshot
+        const intent = await Payment.findOne({ gatewayOrderId: razorpay_order_id, paymentMethod: 'razorpay' });
+        if (!intent || !intent.meta?.checkoutSnapshot) {
+          console.error('No checkout snapshot found for gateway order:', razorpay_order_id);
+          return res.status(404).json({ success: false, message: 'Order not found' });
         }
-        
-        return res.status(404).json({
-          success: false,
-          message: 'Order not found',
-        });
+        const snap = intent.meta.checkoutSnapshot;
+        try {
+          order = new Order({
+            orderNumber: snap.orderNumber,
+            userId: snap.userId,
+            razorpayOrderId: razorpay_order_id,
+            amount: intent.amount,
+            currency: snap.currency || 'INR',
+            paymentMethod: 'razorpay',
+            paymentStatus: 'paid',
+            orderStatus: 'placed',
+            cartItems: snap.cartItems || [],
+            userDetails: snap.userDetails,
+            deliveryLocation: snap.deliveryLocation,
+            hostelName: snap.hostelName,
+            hostelId: snap.hostelId || null,
+            orderSummary: snap.orderSummary,
+            estimatedDeliveryTime: new Date(Date.now() + 45 * 60 * 1000),
+            razorpayPaymentId: razorpay_payment_id
+          });
+          await order.save();
+        } catch (createErr) {
+          console.error('Failed to create order from snapshot:', createErr?.message || createErr);
+          return res.status(500).json({ success: false, message: 'Failed to create order' });
+        }
+      } else {
+        // Update existing order to paid/placed if necessary
+        if (order.paymentStatus !== 'paid') {
+          order.paymentStatus = 'paid';
+          order.orderStatus = 'placed';
+          order.razorpayPaymentId = razorpay_payment_id;
+          await order.save();
+        }
       }
       
       console.log('Payment verified successfully for order:', order.orderNumber);
 
+      // 💝 Update or create donation to completed for online payments
+      try {
+        const donationUpdate = await Donation.updateMany(
+          { 
+            orderId: order._id,
+            paymentMethod: 'razorpay',
+            paymentStatus: 'pending'
+          },
+          { 
+            paymentStatus: 'completed',
+            updatedAt: new Date()
+          }
+        );
+        if (donationUpdate.matchedCount > 0) {
+          console.log('✅ Donation status updated to completed for order:', order.orderNumber);
+        } else {
+          // If there was no pending donation (new flow), create one from snapshot if present
+          try {
+            const intent = await Payment.findOne({ gatewayOrderId: razorpay_order_id, paymentMethod: 'razorpay' });
+            const snap = intent?.meta?.checkoutSnapshot;
+            const d = snap?.donationDetails;
+            if (d && d.donationAmount > 0) {
+              await Donation.create({
+                userId: order.userId,
+                userEmail: order?.userDetails?.email,
+                userName: order?.userDetails?.name,
+                userPhone: order?.userDetails?.phone,
+                donationAmount: d.donationAmount,
+                orderId: order._id,
+                orderNumber: order.orderNumber,
+                paymentMethod: 'razorpay',
+                paymentStatus: 'completed',
+                initiativeName: d.initiativeName || 'கற்பிப்போம் பயிலகம் - Education Initiative',
+                initiativeDescription: d.initiativeDescription || 'Supporting student education and learning resources',
+                deliveryLocation: order.deliveryLocation,
+                hostelName: order.hostelName
+              });
+              console.log('✅ Donation created (online):', d.donationAmount);
+            }
+          } catch (donCreateErr) {
+            console.error('❌ Failed creating donation from snapshot:', donCreateErr?.message || donCreateErr);
+          }
+        }
+      } catch (donationError) {
+        console.error('❌ Failed to update donation status:', donationError);
+        // Don't fail the payment verification if donation update fails
+      }
+
       await ensureOrderPlacedNotification(order, { forceEmit: true });
 
-      // Persist payment record for admin reporting
+      // Persist or update payment record for admin reporting
       try {
-        await Payment.create({
+        const update = {
           userId: order.userId,
           email: order?.userDetails?.email,
           orderId: order.orderNumber,
@@ -869,9 +938,25 @@ export const verifyPayment = asyncHandler(async (req, res) => {
           gatewayPaymentId: razorpay_payment_id,
           gatewayOrderId: razorpay_order_id,
           meta: { source: 'verifyPayment' }
-        });
+        };
+
+        // First try to UPDATE the existing pending intent created at checkout (preferred)
+        const updatedPending = await Payment.findOneAndUpdate(
+          { gatewayOrderId: razorpay_order_id },
+          { $set: update },
+          { new: true }
+        );
+
+        if (!updatedPending) {
+          // Fallback: upsert by gatewayPaymentId (legacy behaviour)
+          await Payment.findOneAndUpdate(
+            { gatewayPaymentId: razorpay_payment_id },
+            { $set: update },
+            { upsert: true }
+          );
+        }
       } catch (persistErr) {
-        console.error('Failed to persist payment record:', persistErr.message);
+        console.error('Failed to persist/update payment record:', persistErr.message);
       }
       
       // IMPORTANT: Decrement actual stock now that payment is confirmed
@@ -890,84 +975,21 @@ export const verifyPayment = asyncHandler(async (req, res) => {
           console.log('📅 Order day tracked:', trackingResult);
           
           // Check if order has free product and mark it as used
-          const hasFreeProduct = order.cartItems.some(item => item.isFreeProduct);
-          if (hasFreeProduct) {
-            await markFreeProductUsed(order.userId);
-            console.log('🎁 Free product reward used');
+          const freeProductItem = order.cartItems.find(item => item.isFreeProduct);
+          if (freeProductItem) {
+            await markFreeProductUsed(
+              order.userId,
+              freeProductItem.productId,
+              freeProductItem.productName || freeProductItem.name,
+              order.orderNumber
+            );
+            console.log('🎁 Free product reward used - NO MORE this month');
           }
         } catch (trackError) {
           console.error('Error tracking order day:', trackError);
           // Don't fail the order if tracking fails
         }
       }
-
-      // Send order confirmation email asynchronously in parallel for online payments (customer and admin simultaneously) - Execute immediately
-      (async () => {
-        try {
-          console.log('═══════════════════════════════════════════════════════════════');
-          console.log('🎯 [PAYMENT CONTROLLER] Online Payment Verified - Triggering Emails');
-          console.log('📦 Order Number:', order.orderNumber);
-          console.log('═══════════════════════════════════════════════════════════════');
-          
-          const user = await User.findById(order.userId).select('email name phone');
-          const orderDetailsForEmail = buildOrderDetailsForEmail(order, user);
-
-          const userEmailTarget = user?.email || orderDetailsForEmail?.userDetails?.email;
-          
-          // Send both customer and admin emails in parallel
-          const emailPromises = [];
-          
-          // Customer email
-          if (userEmailTarget) {
-            console.log('📧 [PAYMENT CONTROLLER] Calling sendOrderConfirmationEmail()');
-            console.log('✉️  Target:', userEmailTarget);
-            const logoData = getLogoData();
-            emailPromises.push(
-              sendOrderConfirmationEmail(orderDetailsForEmail, userEmailTarget, logoData)
-                .then(result => {
-                  if (result.success) {
-                    console.log('✅ [PAYMENT CONTROLLER] Customer email sent:', result.messageId);
-                  } else {
-                    console.error('❌ [PAYMENT CONTROLLER] Customer email failed:', result.error);
-                  }
-                  return result;
-                })
-            );
-          } else {
-            console.log('⚠️ [PAYMENT CONTROLLER] User email not found, skipping confirmation email');
-          }
-
-          // Admin email
-          const adminEmails = await getActiveAdminEmails();
-          if (Array.isArray(adminEmails) && adminEmails.length > 0) {
-            console.log('📧 Sending admin notification email...');
-            emailPromises.push(
-              sendOrderPlacedAdminNotification(orderDetailsForEmail, adminEmails)
-                .then(result => {
-                  if (result.success) {
-                    console.log('✅ Admin new-order email sent:', result.messageId);
-                  } else if (!result.skipped) {
-                    console.error('❌ Failed to send admin new-order email:', result.error);
-                  }
-                  return result;
-                })
-            );
-          } else {
-            console.log('⚠️ [PAYMENT CONTROLLER] No admin recipients configured; skipping admin email');
-          }
-          
-          // Wait for all emails to complete
-          await Promise.all(emailPromises);
-          console.log('═══════════════════════════════════════════════════════════════');
-          console.log('✅ [PAYMENT CONTROLLER] All online payment emails completed');
-          console.log('═══════════════════════════════════════════════════════════════');
-          
-        } catch (emailError) {
-          console.error('═══════════════════════════════════════════════════════════════');
-          console.error('❌ [PAYMENT CONTROLLER] Error sending order placement emails:', emailError.message);
-          console.error('═══════════════════════════════════════════════════════════════');
-        }
-      })().catch(err => console.error('❌ [PAYMENT CONTROLLER] Email sending error:', err));
 
       // Emit WebSocket event to notify admin of new online order
       try {
@@ -995,7 +1017,7 @@ export const verifyPayment = asyncHandler(async (req, res) => {
         console.error('❌ Error emitting WebSocket event for new order:', wsError);
       }
       
-      // After successful online payment verification, remove the user's cart document
+  // After successful online payment verification, remove the user's cart document
       try {
         const userDoc = await User.findById(order.userId).select('uid').lean();
         if (userDoc?.uid) {
@@ -1004,6 +1026,19 @@ export const verifyPayment = asyncHandler(async (req, res) => {
       } catch (clrErr) {
         console.warn('Cart cleanup after payment verify failed:', clrErr?.message || clrErr);
       }
+
+      emitPaymentUpdate(null, {
+        orderId: order.orderNumber,
+        paymentId: razorpay_payment_id,
+        status: 'success',
+        amount: order.amount,
+        paymentMethod: order.paymentMethod || 'razorpay',
+        userId: order.userId,
+        source: 'verifyPayment',
+        metadata: {
+          gatewayOrderId: razorpay_order_id
+        }
+      });
 
       res.json({
         success: true,
@@ -1044,43 +1079,45 @@ export const cancelOrder = asyncHandler(async (req, res) => {
       });
     }
 
-    // Find the order
+    // Find the order (legacy flow) and the payment intent (new flow)
     const order = await Order.findOne({ razorpayOrderId: razorpay_order_id });
+    const paymentIntent = await Payment.findOne({ gatewayOrderId: razorpay_order_id, paymentMethod: 'razorpay' });
 
-    if (!order) {
-      console.log('Order not found for cancellation:', razorpay_order_id);
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
+    if (!order && !paymentIntent) {
+      console.log('No order/payment intent found for cancellation:', razorpay_order_id);
+      return res.status(404).json({ success: false, message: 'Nothing to cancel' });
     }
 
-    // Verify the order belongs to the requesting user
-    if (order.userId.toString() !== userId.toString()) {
-      return res.status(403).json({
-        success: false,
-        message: 'Unauthorized to cancel this order'
-      });
+    if (order) {
+      // Verify the order belongs to the requesting user
+      if (order.userId.toString() !== userId.toString()) {
+        return res.status(403).json({ success: false, message: 'Unauthorized to cancel this order' });
+      }
     }
 
-    // Allow cancellation for 'created', 'pending', and 'failed' payment statuses
-    // Do NOT allow cancellation if payment is 'paid' or already 'cancelled'
-    if (['paid', 'cancelled'].includes(order.paymentStatus)) {
-      console.log('⚠️ Order already processed/cancelled. Payment status:', order.paymentStatus);
-      return res.status(400).json({
-        success: false,
-        message: 'Order cannot be cancelled',
-        currentStatus: order.paymentStatus
-      });
+    // New behavior: If order exists but is not paid, delete it instead of keeping a cancelled order record.
+    if (order) {
+      if (['paid'].includes(order.paymentStatus)) {
+        console.log('⚠️ Order already processed. Payment status:', order.paymentStatus);
+        return res.status(400).json({ success: false, message: 'Order cannot be cancelled', currentStatus: order.paymentStatus });
+      }
+      await Order.deleteOne({ _id: order._id });
+      console.log('🗑️ Pending order document removed for cancelled payment:', order.orderNumber);
+      try {
+        await Notification.deleteMany({ userId: order.userId, orderNumber: order.orderNumber, type: 'order_placed' });
+      } catch {}
     }
 
-    // Update order status to cancelled, keep payment as pending
-  order.orderStatus = 'cancelled';
-  order.paymentStatus = 'pending'; // ✅ Show as PENDING when user cancels
-  order.cancelledAt = new Date();
-    await order.save();
+    // Mark payment intent as failed/cancelled for admin insight (if exists)
+    if (paymentIntent) {
+      try {
+        await Payment.updateOne({ _id: paymentIntent._id }, { $set: { paymentStatus: 'failed', meta: { ...(paymentIntent.meta || {}), cancelledByUser: true, cancelledAt: new Date() } } });
+      } catch (e) {
+        console.warn('Failed to update payment intent on cancel:', e?.message || e);
+      }
+    }
 
-    console.log('✅ Order cancelled successfully:', order.orderNumber);
+  console.log('✅ Cancellation processed for Razorpay order:', razorpay_order_id);
 
     // Delete any "Order Placed" notifications if they exist
     try {
@@ -1099,7 +1136,7 @@ export const cancelOrder = asyncHandler(async (req, res) => {
     res.json({
       success: true,
       message: 'Order cancelled successfully',
-      orderNumber: order.orderNumber
+      orderNumber: order?.orderNumber || paymentIntent?.orderId || undefined
     });
   } catch (error) {
     console.error('Error cancelling order:', error);
@@ -1138,14 +1175,45 @@ export const handleWebhook = asyncHandler(async (req, res) => {
         const capturedPayment = event.payload.payment.entity;
         console.log('Payment captured:', capturedPayment.id);
         
-        const updatedOrder = await Order.findOneAndUpdate(
-          { razorpayOrderId: capturedPayment.order_id },
-          { 
-            paymentStatus: 'paid',
-            razorpayPaymentId: capturedPayment.id,
-            orderStatus: 'placed' // ✅ Mark as 'placed' when payment is captured
+        let updatedOrder = await Order.findOne({ razorpayOrderId: capturedPayment.order_id });
+        if (!updatedOrder) {
+          // Create from snapshot intent if not already created
+          try {
+            const intent = await Payment.findOne({ gatewayOrderId: capturedPayment.order_id, paymentMethod: 'razorpay' });
+            const snap = intent?.meta?.checkoutSnapshot;
+            if (snap) {
+              updatedOrder = new Order({
+                orderNumber: snap.orderNumber,
+                userId: snap.userId,
+                razorpayOrderId: capturedPayment.order_id,
+                amount: (capturedPayment.amount / 100),
+                currency: snap.currency || 'INR',
+                paymentMethod: 'razorpay',
+                paymentStatus: 'paid',
+                orderStatus: 'placed',
+                cartItems: snap.cartItems || [],
+                userDetails: snap.userDetails,
+                deliveryLocation: snap.deliveryLocation,
+                hostelName: snap.hostelName,
+                hostelId: snap.hostelId || null,
+                orderSummary: snap.orderSummary,
+                estimatedDeliveryTime: new Date(Date.now() + 45 * 60 * 1000),
+                razorpayPaymentId: capturedPayment.id
+              });
+              await updatedOrder.save();
+            }
+          } catch (e) {
+            console.error('Webhook failed to create order from snapshot:', e?.message || e);
           }
-        );
+        } else {
+          // Update statuses
+          if (updatedOrder.paymentStatus !== 'paid') {
+            updatedOrder.paymentStatus = 'paid';
+            updatedOrder.orderStatus = 'placed';
+            updatedOrder.razorpayPaymentId = capturedPayment.id;
+            await updatedOrder.save();
+          }
+        }
         // Attempt to clear user's cart as well
         try {
           const orderDoc = await Order.findOne({ razorpayOrderId: capturedPayment.order_id }).select('userId');
@@ -1158,10 +1226,10 @@ export const handleWebhook = asyncHandler(async (req, res) => {
         } catch (cartErr) {
           console.warn('Webhook cart cleanup failed:', cartErr?.message || cartErr);
         }
-        // Save payment record as success
+        // Save payment record as success (update existing intent if present)
         try {
           const linkedOrder = await Order.findOne({ razorpayOrderId: capturedPayment.order_id });
-          await Payment.create({
+          const payload = {
             userId: linkedOrder?.userId,
             email: linkedOrder?.userDetails?.email,
             orderId: linkedOrder?.orderNumber || capturedPayment.order_id,
@@ -1172,7 +1240,19 @@ export const handleWebhook = asyncHandler(async (req, res) => {
             gatewayPaymentId: capturedPayment.id,
             gatewayOrderId: capturedPayment.order_id,
             meta: { source: 'webhook', method: capturedPayment.method }
-          });
+          };
+          const updated = await Payment.findOneAndUpdate(
+            { gatewayOrderId: capturedPayment.order_id },
+            { $set: payload },
+            { new: true }
+          );
+          if (!updated) {
+            await Payment.findOneAndUpdate(
+              { gatewayPaymentId: capturedPayment.id },
+              { $set: payload },
+              { upsert: true }
+            );
+          }
         } catch (err) {
           console.error('Failed to save webhook payment:', err.message);
         }
@@ -1184,15 +1264,11 @@ export const handleWebhook = asyncHandler(async (req, res) => {
         console.log('❌ Payment failed:', failedPayment.id);
         
         // Update order to failed status and DO NOT mark as placed/confirmed
-        const failedOrder = await Order.findOneAndUpdate(
-          { razorpayOrderId: failedPayment.order_id },
-          { 
-            paymentStatus: 'failed',
-            orderStatus: 'cancelled', // Mark order as cancelled when payment fails
-            cancelledAt: new Date()
-          },
-          { new: true }
-        );
+        let failedOrder = await Order.findOne({ razorpayOrderId: failedPayment.order_id });
+        if (failedOrder && failedOrder.paymentStatus !== 'paid') {
+          // Remove pending order so it doesn't appear in admin/user lists
+          await Order.deleteOne({ _id: failedOrder._id });
+        }
 
         // Delete any "Order Placed" notifications for failed payments
         if (failedOrder) {
@@ -1208,10 +1284,10 @@ export const handleWebhook = asyncHandler(async (req, res) => {
           }
         }
 
-        // Record failed payment for admin tracking
+        // Record failed payment for admin tracking (update intent if exists)
         try {
           const linkedOrder = await Order.findOne({ razorpayOrderId: failedPayment.order_id });
-          await Payment.create({
+          const payload = {
             userId: linkedOrder?.userId,
             email: linkedOrder?.userDetails?.email,
             orderId: linkedOrder?.orderNumber || failedPayment.order_id,
@@ -1222,7 +1298,19 @@ export const handleWebhook = asyncHandler(async (req, res) => {
             gatewayPaymentId: failedPayment.id,
             gatewayOrderId: failedPayment.order_id,
             meta: { source: 'webhook', reason: failedPayment.error_reason }
-          });
+          };
+          const updated = await Payment.findOneAndUpdate(
+            { gatewayOrderId: failedPayment.order_id },
+            { $set: payload },
+            { new: true }
+          );
+          if (!updated) {
+            await Payment.findOneAndUpdate(
+              { gatewayPaymentId: failedPayment.id },
+              { $set: payload },
+              { upsert: true }
+            );
+          }
           console.log('💾 Failed payment record saved');
         } catch (err) {
           console.error('Failed to save failed payment:', err.message);
@@ -1503,52 +1591,638 @@ export const getUserOrders = asyncHandler(async (req, res) => {
 
 // Admin: List all payments with filters and pagination
 export const listPayments = asyncHandler(async (req, res) => {
-  const { page = 1, limit = 20, status, method, startDate, endDate, search } = req.query;
-  const filter = {};
-  if (status) filter.paymentStatus = status;
-  if (method) filter.paymentMethod = method;
-  if (startDate || endDate) {
-    filter.date = {};
-    if (startDate) filter.date.$gte = new Date(startDate);
-    if (endDate) filter.date.$lte = new Date(endDate);
-  }
-  if (search) {
-    filter.$or = [
-      { email: { $regex: search, $options: 'i' } },
-      { orderId: { $regex: search, $options: 'i' } },
-    ];
-  }
-  const skip = (Number(page) - 1) * Number(limit);
-  const [payments, total] = await Promise.all([
-    Payment.find(filter).sort({ date: -1 }).skip(skip).limit(Number(limit)),
-    Payment.countDocuments(filter)
-  ]);
+  const {
+    page = 1,
+    limit = 20,
+    status,
+    method,
+    startDate,
+    endDate,
+    search,
+    orderStatus,
+    orderPaymentStatus,
+    deliveryLocation,
+    hostel,
+    email,
+    phone
+  } = req.query;
 
-  // Enrich payments with order status
-  const items = await Promise.all(payments.map(async (payment) => {
-    const paymentObj = payment.toObject();
-    
-    // Try to find the order by orderNumber
-    if (payment.orderId) {
-      try {
-        const order = await Order.findOne({ orderNumber: payment.orderId })
-          .select('orderStatus orderNumber paymentStatus')
-          .lean();
-        
-        if (order) {
-          paymentObj.data = {
-            order: {
-              orderStatus: order.orderStatus,
-              orderNumber: order.orderNumber,
-              paymentStatus: order.paymentStatus
+  const trimmedSearch = typeof search === 'string' ? search.trim() : '';
+  const trimmedDelivery = typeof deliveryLocation === 'string' ? deliveryLocation.trim() : '';
+  const trimmedHostel = typeof hostel === 'string' ? hostel.trim() : '';
+  const trimmedEmail = typeof email === 'string' ? email.trim() : '';
+  const trimmedPhoneRaw = typeof phone === 'string' ? phone.trim() : '';
+  const trimmedPhone = trimmedPhoneRaw.replace(/[^0-9+]/g, '');
+  const trimmedPhoneDigits = trimmedPhone.replace(/\D/g, '');
+
+  const pageNumber = Math.max(1, Number(page) || 1);
+  const limitNumber = Math.min(100, Math.max(1, Number(limit) || 20));
+  const skip = (pageNumber - 1) * limitNumber;
+
+  const normalizeAll = (val) => {
+    if (!val) return '';
+    const s = String(val).trim().toLowerCase();
+    return ['all', 'all methods', 'any'].includes(s) ? '' : s;
+  };
+
+  const paymentMatch = {};
+  const normStatus = normalizeAll(status);
+  const normMethod = normalizeAll(method);
+  // Default behavior: hide failed and pending payments in admin view unless explicitly requested
+  if (!normStatus) {
+    paymentMatch.paymentStatus = { $nin: ['failed', 'pending'] };
+  } else if (normStatus === 'failed') {
+    paymentMatch.paymentStatus = 'failed';
+  } else if (normStatus === 'pending') {
+    paymentMatch.paymentStatus = 'pending';
+  } else {
+    paymentMatch.paymentStatus = normStatus;
+  }
+  if (normMethod) paymentMatch.paymentMethod = normMethod;
+
+  if (startDate || endDate) {
+    paymentMatch.date = paymentMatch.date || {};
+    if (startDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      paymentMatch.date.$gte = start;
+    }
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      paymentMatch.date.$lte = end;
+    }
+  }
+
+  const codEligibleStatuses = ['placed', 'confirmed', 'preparing', 'ready', 'out_for_delivery', 'delivered'];
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+  sevenDaysAgo.setHours(0, 0, 0, 0);
+
+  const hostelRegex = trimmedHostel
+    ? new RegExp(trimmedHostel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
+    : null;
+
+  const pipeline = [
+    { $match: paymentMatch },
+    {
+      $lookup: {
+        from: 'orders',
+        localField: 'orderId',
+        foreignField: 'orderNumber',
+        as: 'orderDoc'
+      }
+    },
+    { $unwind: { path: '$orderDoc', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'users',
+        localField: 'userId',
+        foreignField: '_id',
+        as: 'userDoc'
+      }
+    },
+    { $unwind: { path: '$userDoc', preserveNullAndEmptyArrays: true } },
+    {
+      $addFields: {
+        orderCity: { $ifNull: ['$orderDoc.userDetails.city', ''] },
+        orderHostel: {
+          $cond: {
+            if: { $eq: [{ $type: '$orderDoc.hostelName' }, 'string'] },
+            then: { $trim: { input: '$orderDoc.hostelName' } },
+            else: {
+              $cond: {
+                if: { $eq: [{ $type: '$orderDoc.hostelName' }, 'null'] },
+                then: '',
+                else: {
+                  $ifNull: ['$orderDoc.hostelName', '']
+                }
+              }
             }
-          };
+          }
+        },
+        orderPhone: {
+          $switch: {
+            branches: [
+              {
+                case: { $in: [{ $type: '$orderDoc.userDetails.phone' }, ['int', 'long', 'double', 'decimal']] },
+                then: { $toString: '$orderDoc.userDetails.phone' }
+              },
+              {
+                case: { $eq: [{ $type: '$orderDoc.userDetails.phone' }, 'string'] },
+                then: '$orderDoc.userDetails.phone'
+              }
+            ],
+            default: ''
+          }
+        },
+        userPhone: {
+          $switch: {
+            branches: [
+              {
+                case: { $in: [{ $type: '$userDoc.phone' }, ['int', 'long', 'double', 'decimal']] },
+                then: { $toString: '$userDoc.phone' }
+              },
+              {
+                case: { $eq: [{ $type: '$userDoc.phone' }, 'string'] },
+                then: '$userDoc.phone'
+              }
+            ],
+            default: ''
+          }
+        },
+        deliveryArea: { $ifNull: ['$orderDoc.deliveryLocation.area', ''] },
+        deliveryCityFromObj: { $ifNull: ['$orderDoc.deliveryLocation.city', ''] },
+        deliveryPincode: {
+          $switch: {
+            branches: [
+              {
+                case: { $in: [{ $type: '$orderDoc.deliveryLocation.pincode' }, ['int', 'long', 'double', 'decimal']] },
+                then: { $toString: '$orderDoc.deliveryLocation.pincode' }
+              },
+              {
+                case: { $eq: [{ $type: '$orderDoc.deliveryLocation.pincode' }, 'string'] },
+                then: '$orderDoc.deliveryLocation.pincode'
+              }
+            ],
+            default: ''
+          }
+        },
+        deliveryLocationString: {
+          $switch: {
+            branches: [
+              {
+                case: { $eq: [{ $type: '$orderDoc.deliveryLocation' }, 'objectId'] },
+                then: { $toString: '$orderDoc.deliveryLocation' }
+              },
+              {
+                case: { $in: [{ $type: '$orderDoc.deliveryLocation' }, ['int', 'long', 'double', 'decimal']] },
+                then: { $toString: '$orderDoc.deliveryLocation' }
+              },
+              {
+                case: { $eq: [{ $type: '$orderDoc.deliveryLocation' }, 'string'] },
+                then: '$orderDoc.deliveryLocation'
+              }
+            ],
+            default: ''
+          }
         }
-      } catch (error) {
-        console.error('Error fetching order for payment:', error);
       }
     }
-    
+    ];
+
+  if (orderStatus) {
+    pipeline.push({ $match: { 'orderDoc.orderStatus': orderStatus } });
+  }
+
+  if (orderPaymentStatus) {
+    pipeline.push({ $match: { 'orderDoc.paymentStatus': orderPaymentStatus } });
+  }
+
+  if (trimmedDelivery) {
+    const locationRegex = new RegExp(trimmedDelivery, 'i');
+    pipeline.push({
+      $match: {
+        $or: [
+          { orderCity: locationRegex },
+          { orderHostel: locationRegex },
+          { deliveryArea: locationRegex },
+          { deliveryCityFromObj: locationRegex },
+          { deliveryPincode: locationRegex },
+          { deliveryLocationString: locationRegex }
+        ]
+      }
+    });
+  }
+
+  if (trimmedEmail) {
+    const emailRegex = new RegExp(trimmedEmail, 'i');
+    pipeline.push({
+      $match: {
+        $or: [
+          { email: emailRegex },
+          { 'userDoc.email': emailRegex },
+          { 'orderDoc.userDetails.email': emailRegex }
+        ]
+      }
+    });
+  }
+
+  if (trimmedPhone) {
+    const escapedRaw = trimmedPhone.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const phoneRegex = new RegExp(escapedRaw, 'i');
+    const digitRegex = trimmedPhoneDigits
+      ? new RegExp(trimmedPhoneDigits.split('').map((d) => `${d}\\D*`).join(''), 'i')
+      : null;
+
+    const phoneOrConditions = [
+      { orderPhone: phoneRegex },
+      { userPhone: phoneRegex }
+    ];
+
+    if (digitRegex) {
+      phoneOrConditions.push(
+        { orderPhone: digitRegex },
+        { userPhone: digitRegex }
+      );
+    }
+
+    pipeline.push({
+      $match: {
+        $or: phoneOrConditions
+      }
+    });
+  }
+
+  if (trimmedSearch) {
+    const searchRegex = new RegExp(trimmedSearch, 'i');
+    pipeline.push({
+      $match: {
+        $or: [
+          { email: searchRegex },
+          { orderId: searchRegex },
+          { gatewayOrderId: searchRegex },
+          { gatewayPaymentId: searchRegex },
+          { orderCity: searchRegex },
+          { orderHostel: searchRegex },
+          { orderPhone: searchRegex },
+          { userPhone: searchRegex },
+          { 'userDoc.email': searchRegex },
+          { 'userDoc.name': searchRegex },
+          { 'orderDoc.userDetails.email': searchRegex },
+          { 'orderDoc.userDetails.name': searchRegex }
+        ]
+      }
+    });
+  }
+
+  pipeline.push(
+    { $sort: { date: -1, createdAt: -1 } },
+    {
+      $facet: {
+        items: [
+          ...(hostelRegex ? [{ $match: { orderHostel: hostelRegex } }] : []),
+          { $skip: skip },
+          { $limit: limitNumber }
+        ],
+        totalCount: [
+          ...(hostelRegex ? [{ $match: { orderHostel: hostelRegex } }] : []),
+          { $count: 'value' }
+        ],
+        metrics: [
+          ...(hostelRegex ? [{ $match: { orderHostel: hostelRegex } }] : []),
+          {
+            $group: {
+              _id: null,
+              totalPayments: { $sum: 1 },
+              totalRevenue: {
+                $sum: {
+                  $cond: [
+                    {
+                      $or: [
+                        { $eq: ['$paymentStatus', 'success'] },
+                        {
+                          $and: [
+                            { $eq: ['$paymentMethod', 'cod'] },
+                            { $in: ['$orderDoc.orderStatus', codEligibleStatuses] }
+                          ]
+                        }
+                      ]
+                    },
+                    { $ifNull: ['$amount', 0] },
+                    0
+                  ]
+                }
+              },
+              success: {
+                $sum: {
+                  $cond: [{ $eq: ['$paymentStatus', 'success'] }, 1, 0]
+                }
+              },
+              pending: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ['$paymentStatus', 'pending'] },
+                        { $ne: ['$orderDoc.orderStatus', 'cancelled'] }
+                      ]
+                    },
+                    1,
+                    0
+                  ]
+                }
+              },
+              cancelled: {
+                $sum: {
+                  $cond: [
+                    { $eq: ['$orderDoc.orderStatus', 'cancelled'] },
+                    1,
+                    0
+                  ]
+                }
+              },
+              successAmount: {
+                $sum: {
+                  $cond: [
+                    { $eq: ['$paymentStatus', 'success'] },
+                    { $ifNull: ['$amount', 0] },
+                    0
+                  ]
+                }
+              },
+              pendingAmount: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ['$paymentStatus', 'pending'] },
+                        { $ne: ['$orderDoc.orderStatus', 'cancelled'] }
+                      ]
+                    },
+                    { $ifNull: ['$amount', 0] },
+                    0
+                  ]
+                }
+              },
+              cancelledAmount: {
+                $sum: {
+                  $cond: [
+                    {
+                      $or: [
+                        { $eq: ['$orderDoc.orderStatus', 'cancelled'] },
+                        { $eq: ['$paymentStatus', 'failed'] }
+                      ]
+                    },
+                    { $ifNull: ['$amount', 0] },
+                    0
+                  ]
+                }
+              },
+              codDelivered: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ['$paymentMethod', 'cod'] },
+                        { $eq: ['$orderDoc.orderStatus', 'delivered'] }
+                      ]
+                    },
+                    1,
+                    0
+                  ]
+                }
+              },
+              codDeliveredAmount: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ['$paymentMethod', 'cod'] },
+                        { $eq: ['$orderDoc.orderStatus', 'delivered'] }
+                      ]
+                    },
+                    { $ifNull: ['$amount', 0] },
+                    0
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        last7Days: [
+          ...(hostelRegex ? [{ $match: { orderHostel: hostelRegex } }] : []),
+          { $match: { date: { $gte: sevenDaysAgo } } },
+          {
+            $group: {
+              _id: null,
+              totalPayments: { $sum: 1 },
+              totalRevenue: {
+                $sum: {
+                  $cond: [
+                    {
+                      $or: [
+                        { $eq: ['$paymentStatus', 'success'] },
+                        {
+                          $and: [
+                            { $eq: ['$paymentMethod', 'cod'] },
+                            { $in: ['$orderDoc.orderStatus', codEligibleStatuses] }
+                          ]
+                        }
+                      ]
+                    },
+                    { $ifNull: ['$amount', 0] },
+                    0
+                  ]
+                }
+              },
+              success: {
+                $sum: {
+                  $cond: [{ $eq: ['$paymentStatus', 'success'] }, 1, 0]
+                }
+              },
+              pending: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ['$paymentStatus', 'pending'] },
+                        { $ne: ['$orderDoc.orderStatus', 'cancelled'] }
+                      ]
+                    },
+                    1,
+                    0
+                  ]
+                }
+              },
+              cancelled: {
+                $sum: {
+                  $cond: [
+                    { $eq: ['$orderDoc.orderStatus', 'cancelled'] },
+                    1,
+                    0
+                  ]
+                }
+              },
+              successAmount: {
+                $sum: {
+                  $cond: [
+                    { $eq: ['$paymentStatus', 'success'] },
+                    { $ifNull: ['$amount', 0] },
+                    0
+                  ]
+                }
+              },
+              pendingAmount: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ['$paymentStatus', 'pending'] },
+                        { $ne: ['$orderDoc.orderStatus', 'cancelled'] }
+                      ]
+                    },
+                    { $ifNull: ['$amount', 0] },
+                    0
+                  ]
+                }
+              },
+              cancelledAmount: {
+                $sum: {
+                  $cond: [
+                    {
+                      $or: [
+                        { $eq: ['$orderDoc.orderStatus', 'cancelled'] },
+                        { $eq: ['$paymentStatus', 'failed'] }
+                      ]
+                    },
+                    { $ifNull: ['$amount', 0] },
+                    0
+                  ]
+                }
+              },
+              codDelivered: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ['$paymentMethod', 'cod'] },
+                        { $eq: ['$orderDoc.orderStatus', 'delivered'] }
+                      ]
+                    },
+                    1,
+                    0
+                  ]
+                }
+              },
+              codDeliveredAmount: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ['$paymentMethod', 'cod'] },
+                        { $eq: ['$orderDoc.orderStatus', 'delivered'] }
+                      ]
+                    },
+                    { $ifNull: ['$amount', 0] },
+                    0
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        hostels: [
+          {
+            $group: {
+              _id: '$orderHostel'
+            }
+          },
+          {
+            $match: {
+              _id: { $nin: ['', null] }
+            }
+          },
+          { $sort: { _id: 1 } }
+        ]
+      }
+    }
+  );
+
+  const [result] = await Payment.aggregate(pipeline);
+  const rawItems = result?.items || [];
+  const total = result?.totalCount?.[0]?.value || 0;
+  const metricsRaw = result?.metrics?.[0] || null;
+  const metricsLast7Raw = result?.last7Days?.[0] || null;
+  const hostelOptions = (result?.hostels || []).map((h) => h?._id).filter(Boolean);
+
+  const items = await Promise.all(rawItems.map(async (doc) => {
+    const order = doc.orderDoc || null;
+    const user = doc.userDoc || null;
+
+    const base = {
+      _id: doc._id,
+      userId: doc.userId,
+      email: doc.email,
+      orderId: doc.orderId,
+      amount: doc.amount,
+      paymentMethod: doc.paymentMethod,
+      paymentStatus: doc.paymentStatus,
+      date: doc.date,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+      gatewayPaymentId: doc.gatewayPaymentId,
+      gatewayOrderId: doc.gatewayOrderId,
+      meta: doc.meta
+    };
+
+  const customerEmail = base.email || order?.userDetails?.email || user?.email || '';
+  const customerName = order?.userDetails?.name || user?.name || '';
+  const customerPhone = doc.orderPhone || doc.userPhone || order?.userDetails?.phone || user?.phone || '';
+
+    const locationInfo = order ? await resolveLocationInfo(order.deliveryLocation, order.userDetails) : null;
+    const labelParts = [];
+    if (locationInfo?.area) labelParts.push(locationInfo.area);
+    if (locationInfo?.city) labelParts.push(locationInfo.city);
+    let deliveryLabel = labelParts.join(', ');
+    if (locationInfo?.pincode) {
+      deliveryLabel = deliveryLabel ? `${deliveryLabel} - ${locationInfo.pincode}` : `${locationInfo.pincode}`;
+    }
+
+    if (!deliveryLabel) {
+      const fallbackParts = [doc.deliveryArea, doc.deliveryCityFromObj].filter(Boolean);
+      if (fallbackParts.length) {
+        deliveryLabel = fallbackParts.join(', ');
+      }
+      if (doc.deliveryPincode) {
+        deliveryLabel = deliveryLabel ? `${deliveryLabel} - ${doc.deliveryPincode}` : `${doc.deliveryPincode}`;
+      }
+      if (!deliveryLabel) {
+        if (typeof order?.deliveryLocation === 'string' && order.deliveryLocation.trim()) {
+          deliveryLabel = order.deliveryLocation.trim();
+        } else if (doc.orderHostel) {
+          deliveryLabel = doc.orderHostel;
+        } else if (doc.orderCity) {
+          deliveryLabel = doc.orderCity;
+        } else if (doc.deliveryLocationString) {
+          deliveryLabel = doc.deliveryLocationString;
+        }
+      }
+    }
+
+    const paymentObj = {
+      ...base,
+      email: customerEmail,
+      customerName,
+      phone: customerPhone,
+      deliveryLocationLabel: deliveryLabel,
+      hostelName: order?.hostelName || doc.orderHostel || ''
+    };
+
+    if (user) {
+      paymentObj.user = {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        city: user.city,
+        pincode: user.pincode
+      };
+    }
+
+    if (order) {
+      paymentObj.data = {
+        order: {
+          orderStatus: order.orderStatus,
+          orderNumber: order.orderNumber,
+          paymentStatus: order.paymentStatus
+        },
+        location: locationInfo
+      };
+    } else if (locationInfo) {
+      paymentObj.data = { location: locationInfo };
+    }
+
     return paymentObj;
   }));
 
@@ -1556,7 +2230,55 @@ export const listPayments = asyncHandler(async (req, res) => {
   res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.set('Pragma', 'no-cache');
   res.set('Expires', '0');
-  res.json({ success: true, items, pagination: { page: Number(page), limit: Number(limit), total, pages: Math.ceil(total / Number(limit)) } });
+  const toNumber = (value) => {
+    if (typeof value === 'number') return value;
+    if (value === null || value === undefined) return 0;
+    if (typeof value === 'object' && typeof value.toString === 'function') {
+      const parsed = Number(value.toString());
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const coerceMetrics = (src) => ({
+    totalPayments: toNumber(src?.totalPayments),
+    totalRevenue: toNumber(src?.totalRevenue),
+    success: toNumber(src?.success),
+    pending: toNumber(src?.pending),
+    cancelled: toNumber(src?.cancelled),
+    successAmount: toNumber(src?.successAmount),
+    pendingAmount: toNumber(src?.pendingAmount),
+    cancelledAmount: toNumber(src?.cancelledAmount),
+    codDelivered: toNumber(src?.codDelivered),
+    codDeliveredAmount: toNumber(src?.codDeliveredAmount)
+  });
+
+  const metrics = coerceMetrics(metricsRaw || {});
+  const metricsLast7 = coerceMetrics(metricsLast7Raw || {});
+
+  const hostelDocs = await Hostel.find({ isActive: true }).select('name').sort({ name: 1 }).lean();
+  const hostelsAll = hostelDocs.map((h) => (typeof h?.name === 'string' ? h.name.trim() : '')).filter(Boolean);
+  const combinedHostels = Array.from(new Set([...hostelsAll, ...hostelOptions])).sort((a, b) => a.localeCompare(b));
+
+  res.json({
+    success: true,
+    items,
+    pagination: {
+      page: pageNumber,
+      limit: limitNumber,
+      total,
+      pages: Math.ceil(total / limitNumber)
+    },
+    metadata: {
+      metrics: {
+        filtered: metrics,
+        last7Days: metricsLast7
+      },
+      hostels: combinedHostels,
+      hostelsAll: hostelsAll
+    }
+  });
 });
 
 // Admin: Get single payment by id
@@ -1681,6 +2403,11 @@ export const updatePaymentStatus = asyncHandler(async (req, res) => {
   const prev = payment.paymentStatus;
   payment.paymentStatus = paymentStatus;
   await payment.save();
+
+  emitPaymentUpdate(payment, {
+    source: 'admin_updatePaymentStatus',
+    previousStatus: prev
+  });
 
   // Sync related order paymentStatus when possible
   if (payment.orderId) {

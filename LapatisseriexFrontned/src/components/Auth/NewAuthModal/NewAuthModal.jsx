@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../../../hooks/useAuth';
 import GoogleSignIn from '../GoogleSignIn/GoogleSignIn';
@@ -84,6 +84,13 @@ const NewAuthModal = () => {
     };
   }, [isAuthPanelOpen, clearError, changeAuthType]);
 
+  // Sync activeTab with authType from Redux
+  useEffect(() => {
+    if (authType === 'login' || authType === 'signup') {
+      setActiveTab(authType);
+    }
+  }, [authType]);
+
   if (!isAuthPanelOpen) return null;
 
   const handleClose = () => {
@@ -165,12 +172,11 @@ const NewAuthModal = () => {
                 display: 'flex',
                 flexDirection: 'column',
                 overflow: 'hidden',
-                fontFamily: 'system-ui, -apple-system, sans-serif',
                 backfaceVisibility: 'hidden',
                 willChange: 'transform',
                 transform: 'translateZ(0)' // Force hardware acceleration
               }}
-              className="w-full sm:w-96 md:w-1/2 lg:w-2/5 xl:w-1/3 max-w-md"
+              className="w-full sm:w-96 md:w-1/2 lg:w-2/5 xl:w-1/3 max-w-md auth-modal"
             >
         
         {/* Sharp Header - Orders Theme */}
@@ -187,8 +193,8 @@ const NewAuthModal = () => {
             
             {/* Welcome Text */}
             <h1 
-              className="text-lg font-bold tracking-wide uppercase flex-1 text-center" 
-              style={{color: '#281c20', fontFamily: 'system-ui, -apple-system, sans-serif'}}
+              className="text-lg font-bold tracking-wide uppercase flex-1 text-center auth-title" 
+              style={{color: '#281c20'}}
             >
               {authType === 'forgot-password' ? 'RESET PASSWORD' : 'WELCOME TO LA PATISSERIE'}
             </h1>
@@ -221,13 +227,12 @@ const NewAuthModal = () => {
                 </div>
                 <h3 
                   className="text-sm font-bold mb-2 tracking-wide uppercase" 
-                  style={{color: '#281c20', fontFamily: 'system-ui, -apple-system, sans-serif'}}
+                  style={{color: '#281c20'}}
                 >
                   FORGOT PASSWORD?
                 </h3>
                 <p 
-                  className="text-gray-600 text-xs leading-relaxed font-medium" 
-                  style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}
+                  className="text-gray-600 text-xs leading-relaxed font-medium"
                 >
                   Enter email for reset instructions.
                 </p>
@@ -239,8 +244,8 @@ const NewAuthModal = () => {
               {/* Continue with Email Header */}
               <div className="mb-6">
                 <h2 
-                  className="text-sm font-bold tracking-wide uppercase text-center"
-                  style={{color: '#733857', fontFamily: 'system-ui, -apple-system, sans-serif'}}
+                  className="text-sm font-bold tracking-wide uppercase text-center auth-subtitle"
+                  style={{color: '#733857'}}
                 >
                   CONTINUE WITH EMAIL
                 </h2>
@@ -258,10 +263,9 @@ const NewAuthModal = () => {
                   {activeTab === 'login' ? (
                     <span
                       onClick={() => switchTab('signup')}
-                      className="cursor-pointer text-sm tracking-wide uppercase transition-all duration-300 hover:opacity-80"
+                      className="cursor-pointer text-sm tracking-wide uppercase transition-all duration-300 hover:opacity-80 auth-link"
                       style={{
-                        color: '#733857',
-                        fontFamily: 'system-ui, -apple-system, sans-serif'
+                        color: '#733857'
                       }}
                     >
                       NEW HERE? <strong>SIGN UP</strong>
@@ -269,10 +273,9 @@ const NewAuthModal = () => {
                   ) : (
                     <span
                       onClick={() => switchTab('login')}
-                      className="cursor-pointer text-sm tracking-wide uppercase transition-all duration-300 hover:opacity-80"
+                      className="cursor-pointer text-sm tracking-wide uppercase transition-all duration-300 hover:opacity-80 auth-link"
                       style={{
-                        color: '#733857',
-                        fontFamily: 'system-ui, -apple-system, sans-serif'
+                        color: '#733857'
                       }}
                     >
                       HAVE ACCOUNT? <strong>SIGN IN</strong>
@@ -285,10 +288,9 @@ const NewAuthModal = () => {
                   <div className="text-right">
                     <span
                       onClick={() => changeAuthType('forgot-password')}
-                      className="cursor-pointer text-sm transition-all duration-300 hover:opacity-80"
+                      className="cursor-pointer text-sm transition-all duration-300 hover:opacity-80 auth-link"
                       style={{
-                        color: '#733857',
-                        fontFamily: 'system-ui, -apple-system, sans-serif'
+                        color: '#733857'
                       }}
                     >
                       FORGOT PASSWORD?
@@ -306,9 +308,7 @@ const NewAuthModal = () => {
                   <span 
                     className="px-4 py-1 bg-white font-bold text-xs tracking-wide uppercase"
                     style={{
-                      color: '#733857',
-                      fontFamily: 'system-ui, -apple-system, sans-serif'
-                    }}
+                      color: '#733857'}}
                   >
                     OR
                   </span>

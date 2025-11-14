@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+﻿import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { useAuth } from '../hooks/useAuth';
@@ -31,15 +31,19 @@ import {
   ChevronRight,
   ExternalLink,
   LayoutDashboard,
-} from 'lucide-react';
+  GraduationCap,
+  AlertTriangle} from 'lucide-react';
 import ProductCard from '../components/Products/ProductCard';
 import OrderCard from '../components/Orders/OrderCard';
+import { Toaster, toast } from 'react-hot-toast';
 
 const ProfilePage = () => {
   const { user, loading, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [activeTab, setActiveTab] = useState('main');
+  const [profileDirty, setProfileDirty] = useState(false);
+  const [unsavedBlockNotice, setUnsavedBlockNotice] = useState(false); // now used as a modal open flag
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
@@ -53,6 +57,19 @@ const ProfilePage = () => {
   // Pagination state for transactions
   const [currentPage, setCurrentPage] = useState(1);
   const transactionsPerPage = 6;
+  
+  // Donations state
+  const [donations, setDonations] = useState([]);
+  const [donationStats, setDonationStats] = useState(null);
+  const [donationsLoading, setDonationsLoading] = useState(false);
+  const [donationsError, setDonationsError] = useState(null);
+  // Delete account modal state
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [ackPersonal, setAckPersonal] = useState(false);
+  const [ackOrders, setAckOrders] = useState(false);
+  const [ackStreak, setAckStreak] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   
   // Recently viewed context
   const { recentlyViewed, loading: recentlyViewedLoading, fetchRecentlyViewed } = useRecentlyViewed();
@@ -91,7 +108,7 @@ const ProfilePage = () => {
     // Fire-and-forget for instant UI updates
     updateQuantity(productId, currentQuantity + 1).catch(error => {
       console.error('Error increasing quantity:', error);
-      alert('Failed to update quantity. Please try again.');
+      toast.error('Failed to update quantity. Please try again.');
     });
   };
 
@@ -103,7 +120,7 @@ const ProfilePage = () => {
     // Fire-and-forget for instant UI updates
     updateQuantity(productId, currentQuantity - 1).catch(error => {
       console.error('Error decreasing quantity:', error);
-      alert('Failed to update quantity. Please try again.');
+      toast.error('Failed to update quantity. Please try again.');
     });
   };
 
@@ -115,7 +132,7 @@ const ProfilePage = () => {
       await removeFromCart(productId);
     } catch (error) {
       console.error('Error removing from cart:', error);
-      alert('Failed to remove item. Please try again.');
+      toast.error('Failed to remove item. Please try again.');
     }
   };
 
@@ -137,9 +154,7 @@ const ProfilePage = () => {
 
       const response = await fetch(`${import.meta.env.VITE_API_URL}/payments/orders/user`, {
         headers: {
-          'Authorization': `Bearer ${authToken}`,
-        },
-      });
+          'Authorization': `Bearer ${authToken}`}});
 
       if (!response.ok) {
         throw new Error('Failed to fetch orders');
@@ -156,6 +171,64 @@ const ProfilePage = () => {
     }
   };
 
+  // Fetch user donations
+  const fetchUserDonations = async () => {
+    if (!user) return;
+    
+    setDonationsLoading(true);
+    try {
+      const authToken = localStorage.getItem('authToken');
+      if (!authToken) {
+        throw new Error('Authentication required');
+      }
+
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/donations/user`, {
+        headers: {
+          'Authorization': `Bearer ${authToken}`}});
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch donations');
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        setDonations(data.data.donations || []);
+        setDonationStats(data.data.stats || null);
+        setDonationsError(null);
+      } else {
+        throw new Error(data.message || 'Failed to fetch donations');
+      }
+    } catch (error) {
+      console.error('Error fetching donations:', error);
+      setDonationsError(error.message);
+    } finally {
+      setDonationsLoading(false);
+    }
+  };
+
+  // Fetch donation summary (for stats card)
+  const fetchDonationSummary = async () => {
+    if (!user) return;
+    
+    try {
+      const authToken = localStorage.getItem('authToken');
+      if (!authToken) return;
+
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/donations/user/summary`, {
+        headers: {
+          'Authorization': `Bearer ${authToken}`}});
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          setDonationStats(data.data.totalStats || null);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching donation summary:', error);
+    }
+  };
+
   // Handle navigation state to set active tab
   useEffect(() => {
     if (location.state?.activeTab) {
@@ -167,8 +240,65 @@ const ProfilePage = () => {
   useEffect(() => {
     if (user) {
       fetchUserOrders();
+      fetchDonationSummary();
     }
   }, [user]);
+
+  // Warn on browser/tab close when there are unsaved changes in profile
+  useEffect(() => {
+    const handler = (e) => {
+      if (profileDirty) {
+        e.preventDefault();
+        e.returnValue = '';
+        return '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [profileDirty]);
+
+  // Block in-app navigation clicks and back/forward while editing profile with unsaved changes (use toast, not alerts)
+  useEffect(() => {
+    if (!(profileDirty && activeTab === 'profile')) return;
+
+    let lastToast = 0;
+    const minGap = 1500;
+    const showUnsavedToast = () => {
+      const now = Date.now();
+      if (now - lastToast > minGap) {
+        lastToast = now;
+  toast('You have unsaved profile changes. Save or cancel before leaving.', { icon: '⚠️' });
+        setUnsavedBlockNotice(true);
+      }
+    };
+
+    const clickHandler = (e) => {
+      const el = e.target.closest ? e.target.closest('a[href]') : null;
+      if (el) {
+        const href = el.getAttribute('href') || '';
+        if (href && !href.startsWith('#') && !href.startsWith('mailto:') && !href.startsWith('tel:')) {
+          e.preventDefault();
+          showUnsavedToast();
+        }
+      }
+    };
+    const popHandler = (e) => {
+      showUnsavedToast();
+      history.pushState(null, '', location.href);
+    };
+
+    document.addEventListener('click', clickHandler, true);
+    window.addEventListener('popstate', popHandler);
+    // Push a state so that back will hit our handler first
+    history.pushState(null, '', location.href);
+
+    return () => {
+      document.removeEventListener('click', clickHandler, true);
+      window.removeEventListener('popstate', popHandler);
+    };
+  }, [profileDirty, activeTab, location.href]);
+
+  // For modal UX, don't auto-close; users dismiss explicitly
 
   useEffect(() => {
     if (user && activeTab === 'transactions') {
@@ -181,6 +311,12 @@ const ProfilePage = () => {
       fetchRecentlyViewed();
     }
   }, [user, activeTab, fetchRecentlyViewed]);
+
+  useEffect(() => {
+    if (user && activeTab === 'donations') {
+      fetchUserDonations();
+    }
+  }, [user, activeTab]);
 
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -222,7 +358,7 @@ const ProfilePage = () => {
 
   if (loading) {
     return (
-      <div className="flex flex-col justify-center items-center min-h-[60vh] bg-white" style={{ paddingTop: '65px', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+      <div className="flex flex-col justify-center items-center min-h-[60vh] bg-white" style={{ paddingTop: '65px'}}>
         <div className="relative mb-6">
           <div className="animate-spin h-16 w-16 border-2 border-gray-200 border-t-[#733857]"></div>
           <div className="absolute top-0 left-0 right-0 bottom-0 flex items-center justify-center">
@@ -236,7 +372,7 @@ const ProfilePage = () => {
 
   if (!user) {
     return (
-      <div className="min-h-[60vh] flex flex-col justify-center items-center bg-white" style={{ paddingTop: '65px', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+      <div className="min-h-[60vh] flex flex-col justify-center items-center bg-white" style={{ paddingTop: '65px'}}>
         <User className="h-16 w-16 text-gray-300 mb-6" strokeWidth={1} />
         <h2 className="text-2xl font-light text-gray-900 mb-2 tracking-wide" style={{ letterSpacing: '0.02em' }}>Account Access Required</h2>
         <p className="text-sm text-gray-500 font-light mb-8">Please sign in to view your profile</p>
@@ -247,6 +383,7 @@ const ProfilePage = () => {
         >
           Sign In
         </button>
+        <Toaster position="top-center" gutter={8} />
       </div>
     );
   }
@@ -257,8 +394,19 @@ const ProfilePage = () => {
     { id: 'profile', label: 'My Profile', icon: User },
     { id: 'recently-viewed', label: 'Recently Viewed', icon: Eye },
     { id: 'favorites', label: 'Favorites', icon: Heart },
+    ...(donationStats?.donationCount > 0 ? [{ id: 'donations', label: 'My Contributions', icon: GraduationCap }] : []),
     { id: 'transactions', label: 'Transactions', icon: CreditCard },
   ];
+
+  // Prevent navigation between tabs if profile has unsaved changes
+  const guardedSetActiveTab = (nextTab) => {
+    if (profileDirty && activeTab === 'profile' && nextTab !== 'profile') {
+  toast('Unsaved profile changes. Save or cancel first.', { icon: '⚠️' });
+      setUnsavedBlockNotice(true);
+      return;
+    }
+    setActiveTab(nextTab);
+  };
 
   const renderContent = () => {
     switch (activeTab) {
@@ -283,10 +431,11 @@ const ProfilePage = () => {
                 { id: 'profile', label: 'My Profile', icon: User, color: '#733857', gradient: 'linear-gradient(135deg, rgba(115, 56, 87, 0.05), rgba(115, 56, 87, 0.02))' },
                 { id: 'addresses', label: 'Addresses', icon: MapPin, color: '#412434', gradient: 'linear-gradient(135deg, rgba(65, 36, 52, 0.05), rgba(65, 36, 52, 0.02))' },
                 { id: 'favorites', label: 'Favorites', icon: Heart, color: '#8d4466', count: favorites?.length || 0, gradient: 'linear-gradient(135deg, rgba(141, 68, 102, 0.05), rgba(141, 68, 102, 0.02))' },
+                ...(donationStats?.donationCount > 0 ? [{ id: 'donations', label: 'Donations', icon: GraduationCap, color: '#4a7c59', count: donationStats?.donationCount || 0, gradient: 'linear-gradient(135deg, rgba(74, 124, 89, 0.05), rgba(74, 124, 89, 0.02))' }] : []),
               ].map((item) => (
                 <button
                   key={item.id}
-                  onClick={() => setActiveTab(item.id)}
+                  onClick={() => guardedSetActiveTab(item.id)}
                   className="relative group overflow-hidden transition-all duration-300 aspect-square"
                   style={{
                     border: '1px solid rgba(115, 56, 87, 0.15)',
@@ -332,15 +481,16 @@ const ProfilePage = () => {
             </div>
 
             {/* Desktop/tablet view - Elegant Cards */}
-            <div className="hidden md:grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="hidden md:grid md:grid-cols-2 lg:grid-cols-4 gap-6">
               {[
                 { id: 'profile', label: 'My Profile', icon: User, description: 'View and edit your personal information', color: '#733857', gradient: 'linear-gradient(135deg, rgba(115, 56, 87, 0.04), rgba(115, 56, 87, 0.01))' },
                 { id: 'addresses', label: 'Saved Addresses', icon: MapPin, description: 'Manage your delivery locations', color: '#412434', gradient: 'linear-gradient(135deg, rgba(65, 36, 52, 0.04), rgba(65, 36, 52, 0.01))' },
                 { id: 'favorites', label: 'My Favorites', icon: Heart, description: 'Your favorite desserts & pastries', color: '#8d4466', count: favorites?.length || 0, gradient: 'linear-gradient(135deg, rgba(141, 68, 102, 0.04), rgba(141, 68, 102, 0.01))' },
+                ...(donationStats?.donationCount > 0 ? [{ id: 'donations', label: 'My Contributions', icon: GraduationCap, description: 'Your contribution to student life', color: '#4a7c59', count: donationStats?.donationCount || 0, gradient: 'linear-gradient(135deg, rgba(74, 124, 89, 0.04), rgba(74, 124, 89, 0.01))' }] : []),
               ].map((item) => (
                 <button
                   key={item.id}
-                  onClick={() => setActiveTab(item.id)}
+                  onClick={() => guardedSetActiveTab(item.id)}
                   className="relative group overflow-hidden transition-all duration-300"
                   style={{
                     border: '1px solid rgba(115, 56, 87, 0.15)',
@@ -410,10 +560,140 @@ const ProfilePage = () => {
       case 'profile':
         return (
           <div className="space-y-6">
+            {unsavedBlockNotice && profileDirty && (
+              <div className="fixed inset-0 z-[10000]" role="dialog" aria-modal="true" aria-labelledby="unsaved-modal-title">
+                {/* Backdrop */}
+                <div className="absolute inset-0 bg-black/40" onClick={() => setUnsavedBlockNotice(false)}></div>
+                {/* Modal */}
+                <div className="absolute inset-0 flex items-center justify-center p-4">
+                  <div className="w-full max-w-md rounded-2xl overflow-hidden shadow-2xl border" style={{ borderColor: '#EF4444', background: 'white' }}>
+                    <div className="p-6">
+                      <div className="flex items-start gap-4">
+                        <div className="flex-shrink-0 mt-1">
+                          <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ background: '#EF4444' }}>
+                            <AlertTriangle className="h-7 w-7 text-white" />
+                          </div>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h3 id="unsaved-modal-title" className="text-xl md:text-2xl font-bold mb-1" style={{ color: '#991B1B' }}>Unsaved changes</h3>
+                          <p className="text-sm md:text-base" style={{ color: '#7F1D1D' }}>Save or cancel your edits before leaving this section.</p>
+                        </div>
+                      </div>
+                      <div className="mt-6 flex items-center justify-end gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setUnsavedBlockNotice(false)}
+                          className="px-4 py-2 text-sm font-medium border rounded-md hover:bg-gray-50"
+                          style={{ borderColor: 'rgba(0,0,0,0.1)', color: '#1F2937' }}
+                        >Close</button>
+                      </div>
+                    </div>
+                    <div className="h-1 w-full" style={{ background: 'linear-gradient(to right, #fecaca, #ef4444, #fecaca)' }}></div>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="mb-4">
               <h3 className="text-2xl font-light tracking-wide text-black border-b border-gray-200 pb-3" style={{ letterSpacing: '0.02em' }}>Profile Information</h3>
             </div>
-            <Profile />
+            <Profile onDirtyChange={setProfileDirty} />
+
+            {/* Danger Zone */}
+            <div className="mt-8 border rounded-md bg-white">
+              <div className="p-4 md:p-6">
+                <h4 className="text-lg font-semibold mb-2" style={{ color: '#991B1B' }}>Danger Zone</h4>
+                <p className="text-sm mb-4" style={{ color: 'rgba(153,27,27,0.85)' }}>
+                  Deleting your account is permanent and cannot be undone.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => { setShowDeleteModal(true); setAckPersonal(false); setAckOrders(false); setAckStreak(false); setDeleteError(''); }}
+                  className="px-5 py-3 font-semibold rounded-md border transition-colors"
+                  style={{ background: '#DC2626', color: 'white', borderColor: '#DC2626' }}
+                  onMouseEnter={(e)=>{ e.currentTarget.style.background='#B91C1C'; e.currentTarget.style.borderColor='#B91C1C'; }}
+                  onMouseLeave={(e)=>{ e.currentTarget.style.background='#DC2626'; e.currentTarget.style.borderColor='#DC2626'; }}
+                >
+                  Delete Account
+                </button>
+              </div>
+            </div>
+
+            {/* Delete Account Modal */}
+            {showDeleteModal && (
+              <div className="fixed inset-0 z-[10010]" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
+                <div className="absolute inset-0 bg-black/50" onClick={() => !deleting && setShowDeleteModal(false)}></div>
+                <div className="absolute inset-0 flex items-center justify-center p-4">
+                  <div className="w-full max-w-lg rounded-2xl overflow-hidden shadow-2xl bg-white">
+                    <div className="p-6 md:p-8">
+                      <h3 id="delete-modal-title" className="text-xl md:text-2xl font-bold mb-2" style={{ color: '#111827' }}>Delete your account?</h3>
+                      <p className="text-sm md:text-base mb-4" style={{ color: '#374151' }}>To proceed, please acknowledge all of the following:</p>
+
+                      <div className="space-y-3 md:space-y-4 mb-4">
+                        <label className="flex items-start gap-3 cursor-pointer">
+                          <input type="checkbox" className="mt-1" checked={ackPersonal} onChange={(e)=>setAckPersonal(e.target.checked)} />
+                          <span className="text-sm md:text-base">I understand my personal data will be deleted.</span>
+                        </label>
+                        <label className="flex items-start gap-3 cursor-pointer">
+                          <input type="checkbox" className="mt-1" checked={ackOrders} onChange={(e)=>setAckOrders(e.target.checked)} />
+                          <span className="text-sm md:text-base">I understand my orders and transactions data will be deleted.</span>
+                        </label>
+                        <label className="flex items-start gap-3 cursor-pointer">
+                          <input type="checkbox" className="mt-1" checked={ackStreak} onChange={(e)=>setAckStreak(e.target.checked)} />
+                          <span className="text-sm md:text-base">I understand my order streak and offer/coupon codes will be deleted.</span>
+                        </label>
+                      </div>
+
+                      {deleteError && (
+                        <div className="mb-4 text-sm p-3 rounded-md" style={{ background:'#FEF2F2', color:'#991B1B', border:'1px solid #FCA5A5' }}>
+                          {deleteError}
+                        </div>
+                      )}
+
+                      <div className="mt-2 flex items-center justify-end gap-3">
+                        <button
+                          type="button"
+                          disabled={deleting}
+                          onClick={() => setShowDeleteModal(false)}
+                          className="px-4 py-2 text-sm font-medium border rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                          style={{ borderColor: 'rgba(0,0,0,0.1)', color: '#1F2937' }}
+                        >Cancel</button>
+                        <button
+                          type="button"
+                          disabled={!(ackPersonal && ackOrders && ackStreak) || deleting}
+                          onClick={async ()=>{
+                            setDeleteError('');
+                            setDeleting(true);
+                            try {
+                              const token = localStorage.getItem('authToken');
+                              if (!token) throw new Error('Authentication required');
+                              const res = await fetch(`${import.meta.env.VITE_API_URL}/users/${user.uid}`, {
+                                method: 'DELETE',
+                                headers: { 'Authorization': `Bearer ${token}` }
+                              });
+                              if (!res.ok) {
+                                const data = await res.json().catch(()=>({message:'Failed to delete account'}));
+                                throw new Error(data.message || 'Failed to delete account');
+                              }
+                              toast.success('Your account and related data were deleted.');
+                              await logout();
+                              navigate('/');
+                            } catch (err) {
+                              console.error('Delete account error:', err);
+                              setDeleteError(err.message || 'Failed to delete account. Please try again.');
+                            } finally {
+                              setDeleting(false);
+                            }
+                          }}
+                          className="px-5 py-2.5 text-sm font-semibold rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                          style={{ background: '#DC2626', color: 'white' }}
+                        >{deleting ? 'Deleting…' : 'Delete Account'}</button>
+                      </div>
+                    </div>
+                    <div className="h-1 w-full" style={{ background: 'linear-gradient(to right, #fecaca, #ef4444, #fecaca)' }}></div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         );
       
@@ -1139,6 +1419,181 @@ const ProfilePage = () => {
           </div>
         );
 
+      case 'donations':
+        return (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <h3 className="text-2xl font-light tracking-wide text-black border-b border-gray-200 pb-3" style={{ letterSpacing: '0.02em' }}>
+                Your Contribution to Student Life
+              </h3>
+              <div className="text-sm font-medium px-3 py-1.5 rounded-full bg-gradient-to-r from-[#f7eef3] to-[#f1e8ed] text-[#733857]">
+                கற்பிப்போம் பயிலகம்
+              </div>
+            </div>
+            
+            {donationsLoading ? (
+              <div className="bg-white border border-gray-100 p-12 text-center">
+                <div className="w-16 h-16 bg-white border border-gray-200 flex items-center justify-center mx-auto mb-6">
+                  <GraduationCap className="h-8 w-8 animate-pulse" style={{ color: '#733857' }} />
+                </div>
+                <h4 className="text-lg font-medium mb-2" style={{ color: '#1a1a1a' }}>Loading Your Contributions...</h4>
+                <p className="text-sm tracking-wide" style={{ color: 'rgba(26, 26, 26, 0.5)' }}>Please wait while we fetch your donation history</p>
+              </div>
+            ) : donationsError ? (
+              <div className="bg-white border border-gray-100 p-8 text-center">
+                <h4 className="text-lg font-medium mb-2" style={{ color: '#733857' }}>Error Loading Donations</h4>
+                <p className="mb-6 text-sm" style={{ color: 'rgba(26, 26, 26, 0.6)' }}>{donationsError}</p>
+                <button
+                  onClick={fetchUserDonations}
+                  className="px-6 py-2.5 border text-xs font-bold tracking-widest transition-all duration-300"
+                  style={{ 
+                    borderColor: '#733857',
+                    color: '#733857',
+                    letterSpacing: '0.08em'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#733857';
+                    e.currentTarget.style.color = 'white';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                    e.currentTarget.style.color = '#733857';
+                  }}
+                >
+                  TRY AGAIN
+                </button>
+              </div>
+            ) : donations.length === 0 ? (
+              <div className="bg-white border border-gray-100 p-12 text-center">
+                <div className="w-16 h-16 bg-white border border-gray-200 flex items-center justify-center mx-auto mb-6">
+                  <GraduationCap className="h-8 w-8" style={{ color: '#733857' }} />
+                </div>
+                <h4 className="text-lg font-medium mb-2" style={{ color: '#1a1a1a' }}>No Contributions Yet</h4>
+                <p className="text-sm tracking-wide mb-6" style={{ color: 'rgba(26, 26, 26, 0.5)' }}>Start making a difference in student lives by adding donations to your orders</p>
+                <Link
+                  to="/products"
+                  className="inline-flex items-center px-6 py-2.5 border text-xs font-bold tracking-widest transition-all duration-300"
+                  style={{ 
+                    borderColor: '#733857',
+                    color: '#733857',
+                    letterSpacing: '0.08em'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#733857';
+                    e.currentTarget.style.color = 'white';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                    e.currentTarget.style.color = '#733857';
+                  }}
+                >
+                  BROWSE PRODUCTS
+                </Link>
+              </div>
+            ) : (
+              <>
+                {/* Donation Statistics */}
+                {donationStats && (
+                  <div className="bg-gradient-to-br from-[#f7eef3] to-[#f1e8ed] rounded-lg p-6 mb-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h4 className="text-lg font-semibold text-[#412434]">
+                        Impact Summary
+                      </h4>
+                      <GraduationCap className="h-6 w-6 text-[#733857]" />
+                    </div>
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-[#733857]">₹{donationStats.totalAmount || 0}</div>
+                        <div className="text-xs text-[#8d4466] font-medium uppercase tracking-wider">Total Donated</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-[#733857]">{donationStats.donationCount || 0}</div>
+                        <div className="text-xs text-[#8d4466] font-medium uppercase tracking-wider">Contributions</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-[#733857]">
+                          {donationStats.lastDonation 
+                            ? new Date(donationStats.lastDonation).toLocaleDateString('en-US', { month: 'short' })
+                            : 'N/A'
+                          }
+                        </div>
+                        <div className="text-xs text-[#8d4466] font-medium uppercase tracking-wider">Last Contribution</div>
+                      </div>
+                    </div>
+                    <div className="mt-4 p-3 bg-white/50 rounded-md">
+                      <p className="text-xs text-[#412434] text-center font-medium">
+                        Thank you for supporting education initiatives and making a difference in student lives! 🎓
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Donations List */}
+                <div className="space-y-4">
+                  {donations.map((donation, index) => (
+                    <div key={index} className="bg-white border border-gray-100 p-6 hover:shadow-md transition-shadow">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2">
+                            <GraduationCap className="h-4 w-4 text-[#733857]" />
+                            <span className="font-semibold text-[#412434]">
+                              {donation.initiativeName}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-600 mb-2">
+                            {donation.initiativeDescription}
+                          </p>
+                          <div className="flex items-center gap-4 text-xs text-gray-500">
+                            <span>Order: #{donation.orderNumber}</span>
+                            <span>•</span>
+                            <span>{new Date(donation.createdAt).toLocaleDateString('en-US', {
+                              year: 'numeric',
+                              month: 'short', 
+                              day: 'numeric'
+                            })}</span>
+                            <span>•</span>
+                            <span className="capitalize">{donation.paymentMethod}</span>
+                            <span>•</span>
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                              donation.paymentStatus === 'completed' 
+                                ? 'bg-green-100 text-green-800'
+                                : 'bg-yellow-100 text-yellow-800'
+                            }`}>
+                              {donation.paymentStatus}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="text-right ml-4">
+                          <div className="text-xl font-bold text-[#733857]">₹{donation.donationAmount}</div>
+                          {donation.deliveryLocation && (
+                            <div className="text-xs text-gray-500 mt-1">
+                              📍 {donation.deliveryLocation}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {donations.length > 0 && (
+                  <div className="text-center pt-6 border-t border-gray-100">
+                    <p className="text-sm text-gray-600 mb-2">
+                      Keep making a difference! Add donations to your next order.
+                    </p>
+                    <Link 
+                      to="/products"
+                      className="inline-flex items-center px-4 py-2 text-xs font-medium text-[#733857] hover:text-white hover:bg-[#733857] border border-[#733857] transition-all duration-300"
+                    >
+                      Continue Shopping
+                    </Link>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        );
+
       case 'transactions':
         return (
           <div className="space-y-6">
@@ -1366,29 +1821,31 @@ const ProfilePage = () => {
   };
 
   return (
-    <div className="min-h-screen" style={{ fontFamily: 'system-ui, -apple-system, sans-serif', background: 'linear-gradient(to bottom, #fdfbf9 0%, #ffffff 40%, #fdfbf9 100%)' }}>
+    <div className="min-h-screen" style={{ background: 'linear-gradient(to bottom, #fdfbf9 0%, #ffffff 40%, #fdfbf9 100%)' }}>
       
       {/* Beautiful Profile Hero - Only show on main tab */}
       {activeTab === 'main' && (
         <div className="relative overflow-hidden" style={{ 
-          background: 'linear-gradient(135deg, #fdfbf9 0%, #fff5f0 50%, #fdfbf9 100%)',
-          borderBottom: '1px solid rgba(115, 56, 87, 0.1)'
+          background: 'linear-gradient(135deg, #fffcfe 0%, #fff5f8 30%, #fef2f5 50%, #fff5f8 70%, #fffcfe 100%)',
+          borderBottom: '1px solid rgba(115, 56, 87, 0.15)'
         }}>
           {/* Decorative Elements */}
-          <div className="absolute top-0 right-0 w-64 h-64 opacity-5" style={{
-            background: 'radial-gradient(circle, #733857 0%, transparent 70%)',
-          }}></div>
-          <div className="absolute bottom-0 left-0 w-48 h-48 opacity-5" style={{
-            background: 'radial-gradient(circle, #8d4466 0%, transparent 70%)',
+          <div className="absolute top-0 right-0 w-64 h-64 opacity-8" style={{
+            background: 'radial-gradient(circle, rgba(190, 24, 93, 0.18) 0%, rgba(190, 24, 93, 0.08) 40%, transparent 70%)'}}></div>
+          <div className="absolute bottom-0 left-0 w-48 h-48 opacity-8" style={{
+            background: 'radial-gradient(circle, rgba(115, 56, 87, 0.15) 0%, rgba(115, 56, 87, 0.06) 40%, transparent 70%)'}}></div>
+          <div className="absolute top-1/2 left-1/2 w-72 h-72 opacity-4" style={{
+            background: 'radial-gradient(circle, rgba(190, 24, 93, 0.12) 0%, transparent 70%)',
+            transform: 'translate(-50%, -50%)'
           }}></div>
           
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16">
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-8">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 lg:py-16">
+            <div className="flex flex-col gap-6 sm:gap-8">
               {/* User Profile Info with Beautiful Layout */}
-              <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6">
-                <div className="relative group">
+              <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 sm:gap-6">
+                <div className="relative group flex-shrink-0">
                   {/* Profile Photo with Elegant Frame */}
-                  <div className="relative w-24 h-24 sm:w-28 sm:h-28" style={{
+                  <div className="relative w-20 h-20 sm:w-24 sm:h-24 lg:w-28 lg:h-28" style={{
                     boxShadow: '0 8px 24px rgba(115, 56, 87, 0.12)'
                   }}>
                     <div className="absolute inset-0 border-2" style={{ 
@@ -1408,30 +1865,23 @@ const ProfilePage = () => {
                         />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100">
-                          <User className="h-10 w-10 sm:h-12 sm:w-12" style={{ color: '#733857', opacity: 0.4 }} />
+                          <User className="h-8 w-8 sm:h-10 sm:w-10 lg:h-12 lg:w-12" style={{ color: '#733857', opacity: 0.4 }} />
                         </div>
                       )}
                     </div>
                   </div>
                   {/* Premium Badge */}
-                  <div className="absolute -bottom-2 left-1/2 transform -translate-x-1/2 px-3 py-1 text-white text-xs font-bold uppercase tracking-widest whitespace-nowrap" 
-                    style={{ 
-                      backgroundColor: '#733857',
-                      letterSpacing: '0.12em',
-                      boxShadow: '0 4px 12px rgba(115, 56, 87, 0.3)'
-                    }}>
-                    Member
-                  </div>
+               
                 </div>
                 
                 <div className="flex-1 text-center sm:text-left">
-                  <h1 className="text-3xl sm:text-4xl font-light mb-2" style={{ 
+                  <h1 className="text-2xl sm:text-3xl lg:text-4xl font-light mb-1 sm:mb-2" style={{ 
                     color: '#281c20',
                     letterSpacing: '0.03em'
                   }}>
                     {user?.name || 'Guest'}
                   </h1>
-                  <p className="text-sm mb-4" style={{ 
+                  <p className="text-xs sm:text-sm mb-3 sm:mb-4" style={{ 
                     color: 'rgba(40, 28, 32, 0.6)',
                     letterSpacing: '0.02em'
                   }}>
@@ -1439,7 +1889,7 @@ const ProfilePage = () => {
                   </p>
                   <div className="flex items-center justify-center sm:justify-start gap-3">
                     <div className="flex items-center gap-2">
-                      <Calendar className="h-4 w-4" style={{ color: '#733857', opacity: 0.7 }} strokeWidth={1.5} />
+                      <Calendar className="h-3 w-3 sm:h-4 sm:w-4" style={{ color: '#733857', opacity: 0.7 }} strokeWidth={1.5} />
                       <span className="text-xs" style={{ 
                         color: 'rgba(40, 28, 32, 0.6)',
                         letterSpacing: '0.05em'
@@ -1452,28 +1902,27 @@ const ProfilePage = () => {
               </div>
 
               {/* Elegant Stats Cards */}
-              <div className="grid grid-cols-3 gap-4 sm:gap-6">
+              <div className="grid grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
                 {[
                   { icon: Package, value: orders?.length || 0, label: 'Orders', color: '#733857' },
                   { icon: Heart, value: favorites?.length || 0, label: 'Favorites', color: '#8d4466' },
-                  { icon: ShoppingCart, value: cartCount || 0, label: 'In Cart', color: '#412434' }
+                  { icon: GraduationCap, value: donationStats?.donationCount || 0, label: 'Contributions', color: '#412434' }
                 ].map((stat, index) => (
                   <div key={index} className="relative group">
-                    <div className="bg-white p-4 sm:p-6 text-center transition-all duration-300 hover:shadow-lg" style={{
-                      border: '1px solid rgba(115, 56, 87, 0.15)',
-                      boxShadow: '0 2px 8px rgba(115, 56, 87, 0.05)'
+                    <div className=" p-3 sm:p-4 lg:p-6 text-center transition-all duration-300 " style={{
+                  
                     }}>
-                      <stat.icon className="h-5 w-5 sm:h-6 sm:w-6 mx-auto mb-3 transition-transform duration-300 group-hover:scale-110" 
+                      <stat.icon className="h-4 w-4 sm:h-5 sm:w-5 lg:h-6 lg:w-6 mx-auto mb-2 sm:mb-3 transition-transform duration-300 group-hover:scale-110" 
                         style={{ color: stat.color, opacity: 0.8 }} 
                         strokeWidth={1.5} 
                       />
-                      <div className="text-3xl sm:text-4xl font-light mb-2" style={{ 
+                      <div className="text-2xl sm:text-3xl lg:text-4xl font-light mb-1 sm:mb-2" style={{ 
                         color: stat.color,
                         letterSpacing: '0.02em'
                       }}>
                         {stat.value}
                       </div>
-                      <div className="text-xs uppercase tracking-wider font-medium" style={{ 
+                      <div className="text-[10px] sm:text-xs uppercase tracking-wider font-medium" style={{ 
                         color: 'rgba(40, 28, 32, 0.6)',
                         letterSpacing: '0.08em'
                       }}>
@@ -1493,7 +1942,7 @@ const ProfilePage = () => {
         <div className="bg-white border-b border-gray-200 py-3 md:py-4">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <button 
-              onClick={() => setActiveTab('main')}
+              onClick={() => guardedSetActiveTab('main')}
               className="flex items-center gap-2 text-gray-500 hover:text-[#733857] transition-colors duration-200"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
@@ -1510,104 +1959,137 @@ const ProfilePage = () => {
         {activeTab === 'main' ? (
           /* Desktop: Show sidebar + content, Mobile: Show menu grid */
           <div className="hidden lg:grid lg:grid-cols-4 lg:gap-8">
-            {/* Beautiful Desktop Sidebar Navigation */}
+            {/* Minimal Profile Card Layout - Desktop Sidebar */}
             <div className="lg:col-span-1">
-              <div className="bg-white sticky top-24" style={{
-                border: '1px solid rgba(115, 56, 87, 0.15)',
-                boxShadow: '0 2px 12px rgba(115, 56, 87, 0.06)'
-              }}>
-                <div className="p-6">
-                  {/* Elegant Header */}
-                  <div className="mb-6 pb-4" style={{ borderBottom: '2px solid rgba(115, 56, 87, 0.1)' }}>
-                    <h2 className="text-lg font-light tracking-wide" style={{ 
-                      color: '#281c20',
-                      letterSpacing: '0.03em'
-                    }}>Your Account</h2>
-                    <p className="text-xs mt-1" style={{ 
-                      color: 'rgba(40, 28, 32, 0.5)',
-                      letterSpacing: '0.02em'
-                    }}>Manage your profile & preferences</p>
-                  </div>
-                  
-                  <nav className="space-y-2">
-                    {tabs.map((tab) => (
-                      <button
-                        key={tab.id}
-                        onClick={() => setActiveTab(tab.id)}
-                        className="w-full group relative overflow-hidden transition-all duration-300"
-                      >
-                        <div className="flex items-center gap-3 px-4 py-3 relative z-10 transition-all duration-300" style={{
-                          backgroundColor: 'transparent',
-                          borderLeft: '2px solid transparent'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.borderLeftColor = '#733857';
-                          e.currentTarget.style.backgroundColor = 'rgba(115, 56, 87, 0.04)';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.borderLeftColor = 'transparent';
-                          e.currentTarget.style.backgroundColor = 'transparent';
-                        }}>
-                          <tab.icon className="h-5 w-5 flex-shrink-0 transition-all duration-300" 
-                            style={{ color: 'rgba(115, 56, 87, 0.7)' }} 
-                            strokeWidth={1.5} 
-                          />
-                          <span className="font-medium text-sm text-left transition-all duration-300" style={{ 
-                            color: 'rgba(40, 28, 32, 0.8)',
-                            letterSpacing: '0.02em'
-                          }}>{tab.label}</span>
-                          {tab.id === 'favorites' && favorites?.length > 0 && (
-                            <span className="ml-auto text-white text-xs px-2 py-1 font-bold" style={{ 
-                              backgroundColor: '#733857',
-                              letterSpacing: '0.08em',
-                              boxShadow: '0 2px 6px rgba(115, 56, 87, 0.25)'
-                            }}>
-                              {favorites.length}
-                            </span>
-                          )}
+              <div className="bg-white sticky top-24 border border-gray-100">
+                {/* Profile Card Header */}
+                <div className="p-6 border-b border-gray-100">
+                  <div className="flex flex-col items-center text-center">
+                    <div className="w-20 h-20 rounded-full border-2 border-[#722F37] overflow-hidden mb-3">
+                      {user && user.profilePhoto && user.profilePhoto.url ? (
+                        <img 
+                          src={user.profilePhoto.url} 
+                          alt="Profile" 
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            e.target.onerror = null;
+                            e.target.src = '/images/default-avatar.svg';
+                          }}
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center bg-gray-50">
+                          <User className="h-10 w-10 text-gray-400" />
                         </div>
-                      </button>
-                    ))}
-                  </nav>
-
-                  {/* Elegant Logout Button */}
-                  <div className="mt-8 pt-6" style={{ borderTop: '1px solid rgba(115, 56, 87, 0.1)' }}>
-                    <button
-                      onClick={logout}
-                      className="w-full flex items-center justify-center gap-3 px-4 py-3 transition-all duration-300"
-                      style={{
-                        border: '1px solid rgba(115, 56, 87, 0.3)',
-                        color: '#733857',
-                        backgroundColor: 'transparent'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = '#733857';
-                        e.currentTarget.style.color = 'white';
-                        e.currentTarget.style.borderColor = '#733857';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = 'transparent';
-                        e.currentTarget.style.color = '#733857';
-                        e.currentTarget.style.borderColor = 'rgba(115, 56, 87, 0.3)';
-                      }}
-                    >
-                      <LogOut className="h-4 w-4" strokeWidth={1.5} />
-                      <span className="font-medium text-sm uppercase tracking-wider" style={{ letterSpacing: '0.08em' }}>Sign Out</span>
-                    </button>
+                      )}
+                    </div>
+                    <h3 className="text-base font-medium text-[#281C20] mb-1">
+                      {user?.name || 'Guest'}
+                    </h3>
+                    <p className="text-xs text-gray-500">
+                      {user?.email || 'guest@example.com'}
+                    </p>
                   </div>
+                </div>
+                
+                {/* Stats Grid */}
+                <div className="grid grid-cols-3 gap-px bg-gray-100 border-b border-gray-100">
+                  <div className="bg-white p-4 text-center">
+                    <div className="text-lg font-semibold text-[#722F37]">{orders?.length || 0}</div>
+                    <div className="text-xs text-gray-500 uppercase">Orders</div>
+                  </div>
+                  <div className="bg-white p-4 text-center">
+                    <div className="text-lg font-semibold text-[#722F37]">{favorites?.length || 0}</div>
+                    <div className="text-xs text-gray-500 uppercase">Saved</div>
+                  </div>
+                  <div className="bg-white p-4 text-center">
+                    <div className="text-lg font-semibold text-[#722F37]">{donationStats?.donationCount || 0}</div>
+                    <div className="text-xs text-gray-500 uppercase">Gifts</div>
+                  </div>
+                </div>
+                
+                {/* Navigation Menu */}
+                <nav className="p-3">
+                  {tabs.map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => guardedSetActiveTab(tab.id)}
+                      className="w-full flex items-center justify-between px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors rounded group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <tab.icon className="h-4 w-4 text-gray-400 group-hover:text-[#722F37] transition-colors" strokeWidth={2} />
+                        <span className="font-medium">{tab.label}</span>
+                      </div>
+                      {tab.id === 'favorites' && favorites?.length > 0 && (
+                        <span className="text-xs font-semibold text-[#722F37] bg-[#722F37]/10 px-2 py-0.5 rounded-full">
+                          {favorites.length}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </nav>
+
+                {/* Logout Button */}
+                <div className="p-3 border-t border-gray-100">
+                  <button
+                    onClick={logout}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors rounded"
+                  >
+                    <LogOut className="h-4 w-4" strokeWidth={2} />
+                    <span>Sign Out</span>
+                  </button>
                 </div>
               </div>
             </div>
 
             {/* Desktop Main Content */}
             <div className="lg:col-span-3">
-              <div className="bg-white shadow-lg border border-gray-200 min-h-[400px]">
+              <div className="bg-white  min-h-[400px]">
                 <div className="p-6 sm:p-8">
                   {activeTab === 'main' ? (
-                    <div className="text-center py-12">
-                      <User className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-                      <h3 className="text-xl font-semibold text-gray-900 mb-2">Welcome to Your Account</h3>
-                      <p className="text-gray-600">Select an option from the menu to get started</p>
+                    <div className="relative overflow-hidden" style={{
+                      background: 'linear-gradient(135deg, rgba(255, 252, 254, 0.5) 0%, rgba(254, 242, 245, 0.3) 100%)',
+                      border: '1px solid rgba(115, 56, 87, 0.08)'
+                    }}>
+                      {/* Decorative accent */}
+                      <div className="absolute top-0 right-0 w-32 h-32 opacity-5" style={{
+                        background: 'radial-gradient(circle, rgba(190, 24, 93, 0.3) 0%, transparent 70%)'
+                      }}></div>
+                      
+                      <div className="relative py-12 sm:py-16 lg:py-20 px-4 sm:px-6 text-center">
+                        {/* Icon with elegant frame */}
+                        <div className="relative inline-block mb-6 sm:mb-8">
+                          <div className="absolute inset-0 blur-xl opacity-20" style={{ background: 'linear-gradient(135deg, #733857, #BE185D)' }}></div>
+                          <div className="relative w-20 h-20 sm:w-24 sm:h-24 mx-auto border-2 flex items-center justify-center transition-all duration-500 hover:scale-110" style={{
+                            borderColor: 'rgba(115, 56, 87, 0.2)',
+                            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(253, 242, 248, 0.6))',
+                            backdropFilter: 'blur(10px)',
+                            boxShadow: '0 8px 32px rgba(115, 56, 87, 0.12)'
+                          }}>
+                            <User className="h-10 w-10 sm:h-12 sm:w-12" style={{ 
+                              color: '#733857',
+                              opacity: 0.7
+                            }} strokeWidth={1.5} />
+                          </div>
+                        </div>
+                        
+                        {/* Heading */}
+                        <h3 className="text-2xl sm:text-3xl lg:text-4xl font-extralight mb-3 sm:mb-4" style={{ 
+                          color: '#281c20',
+                          letterSpacing: '0.05em'}}>
+                          Welcome to Your Account
+                        </h3>
+                        
+                        {/* Description */}
+                        <p className="text-xs sm:text-sm lg:text-base max-w-md mx-auto mb-6 sm:mb-8" style={{ 
+                          color: 'rgba(40, 28, 32, 0.6)',
+                          letterSpacing: '0.02em',
+                          lineHeight: '1.6'}}>
+                          Select an option from the menu to manage your profile, view orders, and explore your account
+                        </p>
+                        
+                        {/* Action cards */}
+                     
+                      </div>
                     </div>
                   ) : (
                     renderContent()
@@ -1619,95 +2101,90 @@ const ProfilePage = () => {
         ) : (
           /* Desktop: Show sidebar + content with selected component, Mobile: Show content only */
           <div className="hidden lg:grid lg:grid-cols-4 lg:gap-8">
-            {/* Beautiful Desktop Sidebar Navigation */}
+            {/* Minimal Profile Card Layout - Desktop Sidebar */}
             <div className="lg:col-span-1">
-              <div className="bg-white sticky top-24" style={{
-                border: '1px solid rgba(115, 56, 87, 0.15)',
-                boxShadow: '0 2px 12px rgba(115, 56, 87, 0.06)'
-              }}>
-                <div className="p-6">
-                  {/* Elegant Header */}
-                  <div className="mb-6 pb-4" style={{ borderBottom: '2px solid rgba(115, 56, 87, 0.1)' }}>
-                    <h2 className="text-lg font-light tracking-wide" style={{ 
-                      color: '#281c20',
-                      letterSpacing: '0.03em'
-                    }}>Your Account</h2>
-                    <p className="text-xs mt-1" style={{ 
-                      color: 'rgba(40, 28, 32, 0.5)',
-                      letterSpacing: '0.02em'
-                    }}>Manage your profile & preferences</p>
-                  </div>
-                  
-                  <nav className="space-y-2">
-                    {tabs.map((tab) => (
-                      <button
-                        key={tab.id}
-                        onClick={() => setActiveTab(tab.id)}
-                        className="w-full group relative overflow-hidden transition-all duration-300"
-                      >
-                        <div className="flex items-center gap-3 px-4 py-3 relative z-10 transition-all duration-300" style={{
-                          backgroundColor: activeTab === tab.id ? 'rgba(115, 56, 87, 0.08)' : 'transparent',
-                          borderLeft: `2px solid ${activeTab === tab.id ? '#733857' : 'transparent'}`
-                        }}
-                        onMouseEnter={(e) => {
-                          if (activeTab !== tab.id) {
-                            e.currentTarget.style.borderLeftColor = '#733857';
-                            e.currentTarget.style.backgroundColor = 'rgba(115, 56, 87, 0.04)';
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          if (activeTab !== tab.id) {
-                            e.currentTarget.style.borderLeftColor = 'transparent';
-                            e.currentTarget.style.backgroundColor = 'transparent';
-                          }
-                        }}>
-                          <tab.icon className="h-5 w-5 flex-shrink-0 transition-all duration-300" 
-                            style={{ color: activeTab === tab.id ? '#733857' : 'rgba(115, 56, 87, 0.7)' }} 
-                            strokeWidth={1.5} 
-                          />
-                          <span className="font-medium text-sm text-left transition-all duration-300" style={{ 
-                            color: activeTab === tab.id ? '#733857' : 'rgba(40, 28, 32, 0.8)',
-                            letterSpacing: '0.02em'
-                          }}>{tab.label}</span>
-                          {tab.id === 'favorites' && favorites?.length > 0 && (
-                            <span className="ml-auto text-white text-xs px-2 py-1 font-bold" style={{ 
-                              backgroundColor: '#733857',
-                              letterSpacing: '0.08em',
-                              boxShadow: '0 2px 6px rgba(115, 56, 87, 0.25)'
-                            }}>
-                              {favorites.length}
-                            </span>
-                          )}
+              <div className="bg-white sticky top-24 border border-gray-100">
+                {/* Profile Card Header */}
+                <div className="p-6 border-b border-gray-100">
+                  <div className="flex flex-col items-center text-center">
+                    <div className="w-20 h-20 rounded-full border-2 border-[#722F37] overflow-hidden mb-3">
+                      {user && user.profilePhoto && user.profilePhoto.url ? (
+                        <img 
+                          src={user.profilePhoto.url} 
+                          alt="Profile" 
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            e.target.onerror = null;
+                            e.target.src = '/images/default-avatar.svg';
+                          }}
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center bg-gray-50">
+                          <User className="h-10 w-10 text-gray-400" />
                         </div>
-                      </button>
-                    ))}
-                  </nav>
-
-                  {/* Elegant Logout Button */}
-                  <div className="mt-8 pt-6" style={{ borderTop: '1px solid rgba(115, 56, 87, 0.1)' }}>
-                    <button
-                      onClick={logout}
-                      className="w-full flex items-center justify-center gap-3 px-4 py-3 transition-all duration-300"
-                      style={{
-                        border: '1px solid rgba(115, 56, 87, 0.3)',
-                        color: '#733857',
-                        backgroundColor: 'transparent'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = '#733857';
-                        e.currentTarget.style.color = 'white';
-                        e.currentTarget.style.borderColor = '#733857';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = 'transparent';
-                        e.currentTarget.style.color = '#733857';
-                        e.currentTarget.style.borderColor = 'rgba(115, 56, 87, 0.3)';
-                      }}
-                    >
-                      <LogOut className="h-4 w-4" strokeWidth={1.5} />
-                      <span className="font-medium text-sm uppercase tracking-wider" style={{ letterSpacing: '0.08em' }}>Sign Out</span>
-                    </button>
+                      )}
+                    </div>
+                    <h3 className="text-base font-medium text-[#281C20] mb-1">
+                      {user?.name || 'Guest'}
+                    </h3>
+                    <p className="text-xs text-gray-500">
+                      {user?.email || 'guest@example.com'}
+                    </p>
                   </div>
+                </div>
+                
+                {/* Stats Grid */}
+                <div className="grid grid-cols-3 gap-px bg-gray-100 border-b border-gray-100">
+                  <div className="bg-white p-4 text-center">
+                    <div className="text-lg font-semibold text-[#722F37]">{orders?.length || 0}</div>
+                    <div className="text-xs text-gray-500 uppercase">Orders</div>
+                  </div>
+                  <div className="bg-white p-4 text-center">
+                    <div className="text-lg font-semibold text-[#722F37]">{favorites?.length || 0}</div>
+                    <div className="text-xs text-gray-500 uppercase">Saved</div>
+                  </div>
+                  <div className="bg-white p-4 text-center">
+                    <div className="text-lg font-semibold text-[#722F37]">{donationStats?.donationCount || 0}</div>
+                    <div className="text-xs text-gray-500 uppercase">Gifts</div>
+                  </div>
+                </div>
+                
+                {/* Navigation Menu */}
+                <nav className="p-3">
+                  {tabs.map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => guardedSetActiveTab(tab.id)}
+                      className={`w-full flex items-center justify-between px-3 py-2.5 text-sm transition-colors rounded group ${
+                        activeTab === tab.id 
+                          ? 'bg-[#722F37]/10 text-[#722F37]' 
+                          : 'text-gray-700 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <tab.icon className={`h-4 w-4 transition-colors ${
+                          activeTab === tab.id ? 'text-[#722F37]' : 'text-gray-400 group-hover:text-[#722F37]'
+                        }`} strokeWidth={2} />
+                        <span className="font-medium">{tab.label}</span>
+                      </div>
+                      {tab.id === 'favorites' && favorites?.length > 0 && (
+                        <span className="text-xs font-semibold text-[#722F37] bg-[#722F37]/10 px-2 py-0.5 rounded-full">
+                          {favorites.length}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </nav>
+
+                {/* Logout Button */}
+                <div className="p-3 border-t border-gray-100">
+                  <button
+                    onClick={logout}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors rounded"
+                  >
+                    <LogOut className="h-4 w-4" strokeWidth={2} />
+                    <span>Sign Out</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -1746,7 +2223,7 @@ const ProfilePage = () => {
                     <Link
                       to="/admin/dashboard"
                       className="w-full flex items-center justify-between px-4 py-3 bg-black text-white shadow-sm hover:shadow-md transition-all duration-300"
-                      style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}
+                      style={{  }}
                     >
                       <span className="flex items-center gap-2 font-semibold">
                         <LayoutDashboard className="h-5 w-5" />
@@ -1772,7 +2249,7 @@ const ProfilePage = () => {
                   {tabs.map((tab) => (
                     <button
                       key={tab.id}
-                      onClick={() => setActiveTab(tab.id)}
+                      onClick={() => guardedSetActiveTab(tab.id)}
                       className="relative group overflow-hidden transition-all duration-300"
                       style={{
                         border: '1px solid rgba(115, 56, 87, 0.2)',
@@ -1847,6 +2324,11 @@ const ProfilePage = () => {
           </div>
         )}
       </div>
+      {/* Page-level toaster for consistent notifications */}
+      <Toaster position="top-center" gutter={10} toastOptions={{
+        style: { fontSize: '0.9rem' },
+        duration: 4000
+      }} />
     </div>
   );
 };

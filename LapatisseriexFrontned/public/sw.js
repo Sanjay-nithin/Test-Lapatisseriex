@@ -25,10 +25,9 @@ const dynamicCachePatterns = [
   '/fonts/'   // All fonts
 ];
 
-// External resources to cache
+// External resources to cache (CSS only; font files fetched by browser with proper CORS)
 const externalResources = [
-  'https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500;600;700&display=swap',
-  'https://fonts.gstatic.com/' // Font files
+  'https://fonts.googleapis.com/css2?family=Dancing+Script:wght@600;700&display=swap'
 ];
 
 // Message event - handle skip waiting
@@ -60,23 +59,7 @@ self.addEventListener('install', (event) => {
           externalResources.map(url => cache.add(url).catch(err => console.warn('Failed to cache:', url)))
         );
       }),
-      
-      // Cache external resources separately
-      caches.open(UI_CACHE).then((cache) => {
-        console.log('Service Worker: Caching External Resources');
-        const externalUrls = headerUICache.filter(url => url.startsWith('http'));
-        return Promise.allSettled(
-          externalUrls.map(url => 
-            fetch(url, { mode: 'cors' })
-              .then(response => {
-                if (response.ok) {
-                  return cache.put(url, response);
-                }
-              })
-              .catch(err => console.log('Failed to cache:', url, err))
-          )
-        );
-      })
+      // No duplicate external caching block
     ]).then(() => {
       console.log('Service Worker: All caches updated');
       return self.skipWaiting();
@@ -112,6 +95,7 @@ self.addEventListener('activate', (event) => {
 // Enhanced fetch event - handle network requests with header caching
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
+  const method = event.request.method || 'GET';
   
   // Handle navigation requests (page loads)
   if (event.request.mode === 'navigate') {
@@ -128,7 +112,7 @@ self.addEventListener('fetch', (event) => {
   }
   
   // Handle assets and dynamic content (CSS, JS, images, fonts)
-  else if (shouldCacheDynamically(url.pathname)) {
+  else if (method === 'GET' && shouldCacheDynamically(url.pathname)) {
     event.respondWith(
       // Try cache first for static assets
       caches.match(event.request)
@@ -170,10 +154,11 @@ self.addEventListener('fetch', (event) => {
   // Handle other requests (API, images, etc.)
   else if (event.request.destination !== 'document') {
     event.respondWith(
-      fetch(event.request)
+      // For non-GET (e.g., POST/PUT), do not attempt to cache
+      (method === 'GET' ? fetch(event.request) : fetch(event.request))
         .then((response) => {
-          // If we got a response, clone it and store it in cache
-          if (response.status === 200) {
+          // Only cache successful GET responses
+          if (method === 'GET' && response.status === 200) {
             const responseClone = response.clone();
             caches.open(CACHE_NAME)
               .then((cache) => {
@@ -183,7 +168,11 @@ self.addEventListener('fetch', (event) => {
           return response;
         })
         .catch(() => {
-          // If network fails, try to get from all caches
+          // If network fails:
+          if (method !== 'GET') {
+            // Do not match POST/PUT from cache; just fail gracefully
+            return new Response('Network error', { status: 503 });
+          }
           return caches.match(event.request);
         })
     );

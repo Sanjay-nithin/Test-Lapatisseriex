@@ -1,9 +1,10 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
+import { useNavigate } from 'react-router-dom';
 import { useCategory } from '../../context/CategoryContext/CategoryContext';
 import { useAuth } from '../../hooks/useAuth';
 import { fetchProducts, fetchBestSellers, makeSelectListByKey, makeSelectLoadingByKey, selectHasBestSellers } from '../../redux/productsSlice';
-
+import { useCart } from '../../hooks/useCart';
 
 import BestSellers from './BestSellers';
 import NewlyLaunched from './NewlyLaunched';
@@ -13,8 +14,7 @@ import RecentlyViewedSection from './RecentlyViewedSection';
 import CategorySwiper from './categorySwiper';
 import PageLoadingAnimation from '../common/PageLoadingAnimation';
 import AdvertisementBanner from './AdvertisementBanner';
-import Newsletter from '../Newsletter/Newsletter';
-import NGORibbon from '../NGO/NGORibbon';
+import SearchBar from './SearchBar';
 
 const Home = () => {
   const headingRef = useRef(null);
@@ -28,8 +28,10 @@ const Home = () => {
   const handpickedRef = useRef(null);
 
   const dispatch = useDispatch();
+  const navigate = useNavigate();
   const { categories, fetchCategories, getSpecialImages, specialImagesVersion, loading: categoriesLoading } = useCategory();
   const { isAuthenticated } = useAuth();
+  const { cartItems } = useCart();
 
   // Get section lists from Redux store via memoized selectors
   const selectBestSellers = makeSelectListByKey('bestSellers');
@@ -45,6 +47,17 @@ const Home = () => {
   
   const [specialImages, setSpecialImages] = React.useState({ bestSeller: null, newlyLaunched: null });
   const pageLoading = categoriesLoading || bestSellersLoading || newlyLaunchedLoading;
+
+  // Get cart picked products for search
+  const cartPickedProducts = useMemo(() => {
+    if (!cartItems || cartItems.length === 0) return [];
+    // Extract unique product IDs from cart
+    return cartItems.map(item => item.product || item).filter(Boolean);
+  }, [cartItems]);
+
+  const handleProductClick = (product) => {
+    navigate(`/product/${product._id}`);
+  };
 
   useEffect(() => {
     const loadCategories = async () => {
@@ -165,6 +178,25 @@ const Home = () => {
           <AdvertisementBanner />
         </section>
 
+        {/* Search Bar Section */}
+        <section 
+          className="w-full px-4 md:px-6 lg:px-8 py-6 md:py-8" 
+          style={{ 
+            minHeight: '120px',
+            background: 'linear-gradient(180deg, rgba(255, 245, 248, 0.7) 0%, rgba(255, 250, 252, 0.95) 100%)',
+            display: 'block'
+          }}
+        >
+          <div style={{ width: '100%', maxWidth: '1200px', margin: '0 auto' }}>
+            <SearchBar
+              bestSellers={bestSellersProducts || []}
+              newLaunches={newlyLaunchedProducts || []}
+              cartPicks={cartPickedProducts || []}
+              onProductClick={handleProductClick}
+            />
+          </div>
+        </section>
+
         <section ref={newlyLaunchedRef} className="w-full">
           <NewlyLaunched />
         </section>
@@ -202,12 +234,6 @@ const Home = () => {
         <HandpickedForYou />
       </section>
 
-      {/* NGO Support Ribbon - Before Newsletter */}
-      <section className="w-full">
-        <NGORibbon />
-      </section>
-
-      <Newsletter />
     </div>
     </>
   );

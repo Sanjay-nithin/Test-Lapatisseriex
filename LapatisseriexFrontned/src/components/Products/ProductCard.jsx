@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+﻿import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import PropTypes from 'prop-types';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -18,7 +18,7 @@ import OfferBadge from '../common/OfferBadge';
 import BlobButton from '../common/BlobButton';
 import { addFreeProductToCart } from '../../services/freeProductService';
 
-const ProductCard = ({ product, className = '', compact = false, featured = false, hideCartButton = false, isSelectingFreeProduct = false }) => {
+const ProductCard = React.memo(({ product, className = '', compact = false, featured = false, hideCartButton = false, isSelectingFreeProduct = false, imagePriority = false }) => {
   const [currentMediaIndex, setCurrentMediaIndex] = useState(0);
   const [isHoveringImage, setIsHoveringImage] = useState(false);
   const [videoHasEnded, setVideoHasEnded] = useState(false);
@@ -32,6 +32,7 @@ const ProductCard = ({ product, className = '', compact = false, featured = fals
   const { addToCart, getItemQuantity, updateQuantity, cartItems, refreshCart } = useCart();
 
   const { user, toggleAuthPanel, changeAuthType } = useAuth();
+  const isGuest = !user;
   const { trackProductView } = useRecentlyViewed();
   const { buttonRef: addToCartButtonRef } = useSparkToCart();
   const navigate = useNavigate();
@@ -72,15 +73,18 @@ const ProductCard = ({ product, className = '', compact = false, featured = fals
   
   const mediaItems = useMemo(() => {
     const items = [];
-    // Combine images and videos into a single media items array
+    // Always include images
     imageUrls.forEach((url) => {
       if (url) items.push({ type: 'image', src: url });
     });
-    videoUrls.forEach((url) => {
-      if (url) items.push({ type: 'video', src: url });
-    });
+    // Only include videos for logged-in users to avoid heavy loads for guests
+    if (!isGuest) {
+      videoUrls.forEach((url) => {
+        if (url) items.push({ type: 'video', src: url });
+      });
+    }
     return items;
-  }, [imageUrls, videoUrls]);
+  }, [imageUrls, videoUrls, isGuest]);
 
   const mediaCount = mediaItems.length;
   const hasVideos = videoUrls.length > 0;
@@ -93,8 +97,13 @@ const ProductCard = ({ product, className = '', compact = false, featured = fals
   // Get category image as an additional fallback if available
   const categoryFallback = currentProduct?.category?.featuredImage || null;
   
-  const primaryMediaType = activeMedia?.type || (fallbackImage ? 'image' : fallbackVideo ? 'video' : 'image');
-  const primaryMediaSrc = activeMedia?.src || fallbackImage || fallbackVideo || categoryFallback || null;
+  // For guests, never prefer video as the primary media to avoid auto-loading videos
+  const primaryMediaType = isGuest
+    ? 'image'
+    : (activeMedia?.type || (fallbackImage ? 'image' : (fallbackVideo ? 'video' : 'image')));
+  const primaryMediaSrc = isGuest
+    ? (activeMedia?.src || fallbackImage || categoryFallback || null)
+    : (activeMedia?.src || fallbackImage || fallbackVideo || categoryFallback || null);
   const displayMediaSrc = primaryMediaSrc || '/images/cake1.png';
   const displayMediaType = primaryMediaSrc ? primaryMediaType : 'image';
   const isActiveVideo = displayMediaType === 'video';
@@ -273,8 +282,7 @@ const ProductCard = ({ product, className = '', compact = false, featured = fals
             
             toast.success('🎁 Free product added to cart!', {
               position: 'top-center',
-              autoClose: 2000,
-            });
+              autoClose: 2000});
             
             // Dispatch event for other components
             if (typeof window !== 'undefined' && window.dispatchEvent) {
@@ -333,18 +341,21 @@ const ProductCard = ({ product, className = '', compact = false, featured = fals
     if (currentQuantity > 0) {
       goCart();
     } else {
-      const variantIndex = currentProduct.variants?.findIndex(v => v === variant) || 0;
-      console.log('[Reserve] product=', currentProduct._id, 'variantIndex=', variantIndex, 'tracks=', tracks, 'stock=', totalStock);
-      addToCart(currentProduct, 1, variantIndex)
-        .then(() => {
-          setTimeout(() => productLiveCache.get(currentProduct._id, undefined, { force: true }), 800);
-        })
-        .catch((error) => {
-          console.error('❌ Error adding product to cart:', error);
-          const message = typeof error?.error === 'string' ? error.error : error?.message || 'Failed to add to cart';
-          toast.error(message);
-        });
-      goCart();
+      try {
+        const variantIndex = currentProduct.variants?.findIndex(v => v === variant) || 0;
+        console.log('[Reserve] product=', currentProduct._id, 'variantIndex=', variantIndex, 'tracks=', tracks, 'stock=', totalStock);
+        
+        // Wait for addToCart operation to complete before navigating
+        await addToCart(currentProduct, 1, variantIndex);
+        console.log('✅ Product added successfully, navigating to cart');
+        
+        setTimeout(() => productLiveCache.get(currentProduct._id, undefined, { force: true }), 800);
+        goCart();
+      } catch (error) {
+        console.error('❌ Error adding product to cart:', error);
+        const message = typeof error?.error === 'string' ? error.error : error?.message || 'Failed to add to cart';
+        toast.error(message);
+      }
     }
   };
 
@@ -369,10 +380,13 @@ const ProductCard = ({ product, className = '', compact = false, featured = fals
       if (currentQuantity === 0) {
         const variantIndex = currentProduct.variants?.findIndex(v => v === variant) || 0;
         console.log('[BuyNow] product=', currentProduct._id, 'variantIndex=', variantIndex, 'tracks=', tracks, 'stock=', totalStock);
-        await addToCart(currentProduct, 1, variantIndex);
         
-  // Immediately refresh stock data after adding to cart
-  setTimeout(() => productLiveCache.get(currentProduct._id, undefined, { force: true }), 800);
+        // Wait for addToCart operation to complete before navigating
+        await addToCart(currentProduct, 1, variantIndex);
+        console.log('✅ Product added successfully via BuyNow, navigating to cart');
+        
+        // Immediately refresh stock data after adding to cart
+        setTimeout(() => productLiveCache.get(currentProduct._id, undefined, { force: true }), 800);
       }
       
       navigate('/cart');
@@ -494,12 +508,13 @@ const ProductCard = ({ product, className = '', compact = false, featured = fals
                     className="w-full h-full"
                     aspectRatio="auto"
                     objectFit="cover"
+                    lazy={!imagePriority}
                     videoProps={{
                       controls: false,
                       muted: true,
                       playsInline: true, // Ensure inline playback on mobile devices
-                      preload: 'metadata',
-                      autoPlay: true,
+                      preload: isGuest ? 'none' : 'metadata',
+                      autoPlay: isGuest ? false : true,
                       onPlay: handleVideoPlay,
                       onLoadedData: handleVideoPlay,
                       onEnded: handleVideoEnded,
@@ -581,12 +596,11 @@ const ProductCard = ({ product, className = '', compact = false, featured = fals
                   disabled={!isActive || isOutOfStockTracked || !isProductAvailable}
                   className="px-4 py-2 text-xs font-light"
                   style={{
-                    fontFamily: 'system-ui, -apple-system, sans-serif',
                     ...(isSelectingFreeProduct ? { backgroundColor: '#10b981', borderColor: '#10b981' } : {})
                   }}
                 >
                   {isSelectingFreeProduct 
-                    ? '🎁 Select FREE' 
+                    ? 'Select FREE' 
                     : (!isProductAvailable ? 'Closed' : isOutOfStockTracked ? 'Unavailable' : 'Add')
                   }
                 </BlobButton>
@@ -608,7 +622,6 @@ const ProductCard = ({ product, className = '', compact = false, featured = fals
                       ? 'text-gray-400 cursor-not-allowed'
                       : 'text-[#733857] hover:bg-[#733857]/10'
                   }`}
-                  style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}
                 >
                   −
                 </button>
@@ -648,7 +661,6 @@ const ProductCard = ({ product, className = '', compact = false, featured = fals
                     ? 'text-gray-400 border-gray-300'
                     : 'text-[#733857] border-[#733857]'
                 }`}
-                style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}
                 >
                   {currentQuantity}
                 </motion.span>
@@ -663,7 +675,6 @@ const ProductCard = ({ product, className = '', compact = false, featured = fals
                       ? 'text-gray-400 cursor-not-allowed'
                       : 'text-[#733857] hover:bg-[#733857]/10'
                   }`}
-                  style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}
                 >
                   +
                 </button>
@@ -688,7 +699,6 @@ const ProductCard = ({ product, className = '', compact = false, featured = fals
                 ? 'text-sm' 
                 : 'text-xs sm:text-sm md:text-base'
             } cursor-pointer mb-1 hover:from-[#8d4466] hover:via-[#412434] hover:to-[#733857] transition-all duration-300`}
-            style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}
             onClick={handleCardClick}
           >
             {currentProduct.name}
@@ -700,9 +710,9 @@ const ProductCard = ({ product, className = '', compact = false, featured = fals
             <div className="min-w-0">
               <div className="inline-flex items-center gap-2 bg-white border border-[#733857]/30 rounded-full px-2 py-0.5 shadow-sm">
                 <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-green-600 text-white text-[9px] leading-none">★</span>
-                <span className="text-xs font-light bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] bg-clip-text text-transparent" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>{productRating.rating}</span>
+                <span className="text-xs font-light bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] bg-clip-text text-transparent">{productRating.rating}</span>
                 <span className="text-xs bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] bg-clip-text text-transparent">|</span>
-                <span className="text-xs bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] bg-clip-text text-transparent" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>{ratingCountDisplay}</span>
+                <span className="text-xs bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] bg-clip-text text-transparent">{ratingCountDisplay}</span>
               </div>
             </div>
 
@@ -710,7 +720,7 @@ const ProductCard = ({ product, className = '', compact = false, featured = fals
             <div className="text-xs flex-shrink-0">
               <span
                 className="font-bold"
-                style={{ fontFamily: 'system-ui, -apple-system, sans-serif', color: orderExperience.color }}
+                style={{ color: orderExperience.color }}
               >
                 {orderExperience.label}
               </span>
@@ -718,14 +728,14 @@ const ProductCard = ({ product, className = '', compact = false, featured = fals
           </div>
 
           {/* One-line product description */}
-          <p className="text-xs bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] bg-clip-text text-transparent mb-2 line-clamp-1 font-medium" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+          <p className="text-xs bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] bg-clip-text text-transparent mb-2 line-clamp-1 font-medium">
             {currentProduct.description || 'Delicious handcrafted treat made with premium ingredients.'}
           </p>
 
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-baseline gap-1">
               {discountPercentage > 0 && (
-                <span className="text-gray-500 line-through text-xs font-medium" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+                <span className="text-gray-500 line-through text-xs font-medium">
                   {formatCurrency(originalPrice)}
                 </span>
               )}
@@ -733,7 +743,6 @@ const ProductCard = ({ product, className = '', compact = false, featured = fals
                 className={`font-light bg-gradient-to-r from-[#733857] via-[#8d4466] to-[#412434] bg-clip-text text-transparent ${
                   featured || compact ? 'text-sm' : 'text-sm sm:text-base'
                 }`}
-                style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}
               >
                 {formatCurrency(sellingPrice)}
               </span>
@@ -745,75 +754,76 @@ const ProductCard = ({ product, className = '', compact = false, featured = fals
         </div>
 
         {/* Reserve Button - Creative Animated Design with Mobile Support */}
-        <button
-          onClick={handleReserve}
-          disabled={!isActive || totalStock === 0 || !isProductAvailable}
-          className={`group relative w-full sm:w-11/12 lg:w-3/4 mx-auto mt-3 sm:mt-4 py-2 px-3 text-xs font-light transition-all duration-200 rounded-lg overflow-hidden ${
-            !isActive || totalStock === 0 || !isProductAvailable
-              ? 'bg-gray-50 text-gray-400 border border-gray-200 cursor-not-allowed'
-              : 'bg-white text-gray-900 border-2 border-[#733857] hover:text-white active:text-white touch-manipulation'
-          }`}
-          style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}
-        >
-          {/* Animated background fill - works on both hover and active (touch) */}
-          {isActive && totalStock > 0 && isProductAvailable && (
-            <div className="absolute inset-0 bg-[#733857] transform -translate-x-full group-hover:translate-x-0 group-active:translate-x-0 transition-transform duration-200 ease-out"></div>
-          )}
-          
-          {/* Button content with animations for both hover and touch */}
-          <span className="relative z-10 flex items-center justify-center gap-1.5">
-            {!isActive ? (
-              'Unavailable'
-            ) : totalStock === 0 ? (
-              'No Stock'
-            ) : !isProductAvailable ? (
-              'Closed'
-            ) : (
+        {!isSelectingFreeProduct && (
+          <button
+            onClick={handleReserve}
+            disabled={!isActive || totalStock === 0 || !isProductAvailable}
+            className={`group relative w-full sm:w-11/12 lg:w-3/4 mx-auto mt-3 sm:mt-4 py-2 px-3 text-xs font-light transition-all duration-200 rounded-lg overflow-hidden ${
+              !isActive || totalStock === 0 || !isProductAvailable
+                ? 'bg-gray-50 text-gray-400 border border-gray-200 cursor-not-allowed'
+                : 'bg-white text-gray-900 border-2 border-[#733857] hover:text-white active:text-white touch-manipulation'
+            }`}
+          >
+            {/* Animated background fill - works on both hover and active (touch) */}
+            {isActive && totalStock > 0 && isProductAvailable && (
+              <div className="absolute inset-0 bg-[#733857] transform -translate-x-full group-hover:translate-x-0 group-active:translate-x-0 transition-transform duration-200 ease-out"></div>
+            )}
+            
+            {/* Button content with animations for both hover and touch */}
+            <span className="relative z-10 flex items-center justify-center gap-1.5">
+              {!isActive ? (
+                'Unavailable'
+              ) : totalStock === 0 ? (
+                'No Stock'
+              ) : !isProductAvailable ? (
+                'Closed'
+              ) : (
+                <>
+                  <svg 
+                    className="w-3 h-3 transition-transform duration-200 group-hover:rotate-6 group-active:rotate-6" 
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6l4 2" />
+                    <circle cx="12" cy="12" r="10" />
+                  </svg>
+                  <span className="transform transition-all duration-300 group-hover:tracking-wider group-active:tracking-wider">
+                    Reserve
+                  </span>
+                  <svg 
+                    className="w-3 h-3 transition-all duration-300 group-hover:translate-x-1 group-hover:scale-110 group-active:translate-x-1 group-active:scale-110" 
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </>
+              )}
+            </span>
+
+            {/* Sparkle effects - show on both hover and active for mobile */}
+            {isActive && totalStock > 0 && isProductAvailable && (
               <>
-                <svg 
-                  className="w-3 h-3 transition-transform duration-200 group-hover:rotate-6 group-active:rotate-6" 
-                  fill="none" 
-                  stroke="currentColor" 
-                  viewBox="0 0 24 24"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6l4 2" />
-                  <circle cx="12" cy="12" r="10" />
-                </svg>
-                <span className="transform transition-all duration-300 group-hover:tracking-wider group-active:tracking-wider">
-                  Reserve
-                </span>
-                <svg 
-                  className="w-3 h-3 transition-all duration-300 group-hover:translate-x-1 group-hover:scale-110 group-active:translate-x-1 group-active:scale-110" 
-                  fill="none" 
-                  stroke="currentColor" 
-                  viewBox="0 0 24 24"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
+                <div className="absolute top-1 right-2 w-1 h-1 bg-[#8d4466] rounded-full opacity-0 group-hover:opacity-100 group-active:opacity-100 group-hover:animate-ping group-active:animate-ping transition-opacity duration-300 delay-100"></div>
+                <div className="absolute bottom-1 left-3 w-1 h-1 bg-[#733857] rounded-full opacity-0 group-hover:opacity-100 group-active:opacity-100 group-hover:animate-ping group-active:animate-ping transition-opacity duration-300 delay-200"></div>
+                <div className="absolute top-2 left-1/2 w-0.5 h-0.5 bg-[#8d4466] rounded-full opacity-0 group-hover:opacity-100 group-active:opacity-100 group-hover:animate-pulse group-active:animate-pulse transition-opacity duration-300 delay-150"></div>
               </>
             )}
-          </span>
 
-          {/* Sparkle effects - show on both hover and active for mobile */}
-          {isActive && totalStock > 0 && isProductAvailable && (
-            <>
-              <div className="absolute top-1 right-2 w-1 h-1 bg-[#8d4466] rounded-full opacity-0 group-hover:opacity-100 group-active:opacity-100 group-hover:animate-ping group-active:animate-ping transition-opacity duration-300 delay-100"></div>
-              <div className="absolute bottom-1 left-3 w-1 h-1 bg-[#733857] rounded-full opacity-0 group-hover:opacity-100 group-active:opacity-100 group-hover:animate-ping group-active:animate-ping transition-opacity duration-300 delay-200"></div>
-              <div className="absolute top-2 left-1/2 w-0.5 h-0.5 bg-[#8d4466] rounded-full opacity-0 group-hover:opacity-100 group-active:opacity-100 group-hover:animate-pulse group-active:animate-pulse transition-opacity duration-300 delay-150"></div>
-            </>
-          )}
-
-          {/* Mobile-specific pulse animation on tap */}
-          {isProductAvailable && (
-            <div className="absolute inset-0 bg-[#733857] opacity-0 group-active:opacity-10 transition-opacity duration-150 rounded-lg md:hidden"></div>
-          )}
-        </button>
+            {/* Mobile-specific pulse animation on tap */}
+            {isProductAvailable && (
+              <div className="absolute inset-0 bg-[#733857] opacity-0 group-active:opacity-10 transition-opacity duration-150 rounded-lg md:hidden"></div>
+            )}
+          </button>
+        )}
       </div>
 
 
     </div>
   );
-};
+});
 
 ProductCard.propTypes = {
   product: PropTypes.shape({
@@ -826,19 +836,15 @@ ProductCard.propTypes = {
         quantity: PropTypes.number,
         measuringUnit: PropTypes.string,
         discount: PropTypes.shape({
-          value: PropTypes.number,
-        }),
-      })
+          value: PropTypes.number})})
     ).isRequired,
     images: PropTypes.arrayOf(PropTypes.string),
     isActive: PropTypes.bool,
     stock: PropTypes.number,
-    hasEgg: PropTypes.bool,
-  }).isRequired,
+    hasEgg: PropTypes.bool}).isRequired,
   className: PropTypes.string,
   compact: PropTypes.bool,
   featured: PropTypes.bool,
-  hideCartButton: PropTypes.bool,
-};
+  hideCartButton: PropTypes.bool};
 
 export default ProductCard;

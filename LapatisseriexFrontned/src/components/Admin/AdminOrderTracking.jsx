@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   FaTruck, 
@@ -14,6 +14,7 @@ import {
 } from 'react-icons/fa';
 import { toast } from 'react-hot-toast';
 import { resolveOrderItemVariantLabel } from '../../utils/variantUtils';
+import webSocketService from '../../services/websocketService';
 
 // CSS for line clamp
 const styles = `
@@ -53,18 +54,18 @@ const IndividualOrderCard = ({ order, onDispatchItem, dispatchLoading, dispatchS
     <div className="bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden">
       {/* Order Header */}
       <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-6 py-4 border-b">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-lg font-semibold text-gray-900 break-words">
               Order #{order.orderNumber}
             </h3>
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-gray-600 break-words">
               {order.userDetails?.name || 'Customer'} • {order.hostelName}
             </p>
           </div>
-          <div className="text-right">
+          <div className="sm:text-right">
             <p className="text-lg font-bold text-gray-900">₹{order.amount}</p>
-            <div className="flex items-center gap-2 text-sm">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
               <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                 order.orderStatus === 'delivered' ? 'bg-green-100 text-green-800' :
                 order.orderStatus === 'out_for_delivery' ? 'bg-purple-100 text-purple-800' :
@@ -77,7 +78,7 @@ const IndividualOrderCard = ({ order, onDispatchItem, dispatchLoading, dispatchS
             
             {/* Dispatch Progress */}
             <div className="mt-2 space-y-1">
-              <div className="flex items-center gap-2 text-xs text-gray-600">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
                 <span className="text-orange-600">📦 Pending: {pendingItems}</span>
                 <span className="text-purple-600">🚚 Dispatched: {dispatchedItems}</span>
                 <span className="text-green-600">✅ Delivered: {deliveredItems}</span>
@@ -90,7 +91,7 @@ const IndividualOrderCard = ({ order, onDispatchItem, dispatchLoading, dispatchS
         </div>
         
         {/* Bulk Actions - Remove delivery functionality */}
-        </div>
+      </div>
 
       {/* All Order Items */}
       <div className="p-6">
@@ -108,45 +109,47 @@ const IndividualOrderCard = ({ order, onDispatchItem, dispatchLoading, dispatchS
             const variantLabel = resolveOrderItemVariantLabel(item);
             
             return (
-              <div key={`pending-${index}`} className="flex items-center justify-between p-4 bg-orange-50 rounded-lg border border-orange-200">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-1 bg-orange-100 text-orange-800 text-xs font-medium rounded">PENDING</span>
-                    <h5 className="font-medium text-gray-900">{item.productName}</h5>
+              <div key={`pending-${index}`} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 bg-orange-50 rounded-lg border border-orange-200">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="px-2 py-1 bg-orange-100 text-orange-800 text-xs font-medium rounded whitespace-nowrap">PENDING</span>
+                    <h5 className="font-medium text-gray-900 truncate">{item.productName}</h5>
                   </div>
-                  <div className="flex items-center gap-4 text-sm text-gray-600 mt-1">
-                    <span>Category: {item.categoryName}</span>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-600 mt-1">
+                    <span className="whitespace-pre-wrap break-words">Category: {item.categoryName}</span>
                     {variantLabel && (
-                      <span>Variant: {variantLabel}</span>
+                      <span className="whitespace-pre-wrap break-words">Variant: {variantLabel}</span>
                     )}
                     <span>Qty: {item.quantity}</span>
                     <span>Price: ₹{item.price}</span>
                   </div>
                 </div>
                 
-                <button
-                  onClick={() => onDispatchItem(order._id, item.productName, item.categoryName)}
-                  disabled={isDispatching || isSuccess}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors duration-200 flex items-center gap-2 ${
-                    isSuccess 
-                      ? 'bg-emerald-500 text-white cursor-default' 
-                      : 'bg-green-600 hover:bg-green-700 text-white disabled:opacity-50'
-                  }`}
-                >
-                  {isDispatching ? (
-                    <FaSpinner className="animate-spin" />
-                  ) : isSuccess ? (
-                    <>
-                      <span>✓</span>
-                      <span>Dispatched!</span>
-                    </>
-                  ) : (
-                    <>
-                      <FaTruck />
-                      <span>Dispatch</span>
-                    </>
-                  )}
-                </button>
+                <div className="sm:flex-shrink-0">
+                  <button
+                    onClick={() => onDispatchItem(order._id, item.productName, item.categoryName)}
+                    disabled={isDispatching || isSuccess}
+                    className={`w-full sm:w-auto px-4 py-2 rounded-lg text-sm font-medium transition-colors duration-200 flex items-center justify-center gap-2 ${
+                      isSuccess 
+                        ? 'bg-emerald-500 text-white cursor-default' 
+                        : 'bg-green-600 hover:bg-green-700 text-white disabled:opacity-50'
+                    }`}
+                  >
+                    {isDispatching ? (
+                      <FaSpinner className="animate-spin" />
+                    ) : isSuccess ? (
+                      <>
+                        <span>✓</span>
+                        <span>Dispatched!</span>
+                      </>
+                    ) : (
+                      <>
+                        <FaTruck />
+                        <span>Dispatch</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -156,21 +159,21 @@ const IndividualOrderCard = ({ order, onDispatchItem, dispatchLoading, dispatchS
             const variantLabel = resolveOrderItemVariantLabel(item);
 
             return (
-              <div key={`dispatched-${index}`} className="flex items-center justify-between p-4 bg-purple-50 rounded-lg border border-purple-200">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-1 bg-purple-100 text-purple-800 text-xs font-medium rounded">DISPATCHED</span>
-                    <h5 className="font-medium text-gray-900">{item.productName}</h5>
+              <div key={`dispatched-${index}`} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 bg-purple-50 rounded-lg border border-purple-200">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="px-2 py-1 bg-purple-100 text-purple-800 text-xs font-medium rounded whitespace-nowrap">DISPATCHED</span>
+                    <h5 className="font-medium text-gray-900 truncate">{item.productName}</h5>
                   </div>
-                  <div className="flex items-center gap-4 text-sm text-gray-600 mt-1">
-                    <span>Category: {item.categoryName}</span>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-600 mt-1">
+                    <span className="whitespace-pre-wrap break-words">Category: {item.categoryName}</span>
                     {variantLabel && (
-                      <span>Variant: {variantLabel}</span>
+                      <span className="whitespace-pre-wrap break-words">Variant: {variantLabel}</span>
                     )}
                     <span>Qty: {item.quantity}</span>
                     <span>Price: ₹{item.price}</span>
                     {item.dispatchedAt && (
-                      <span>Dispatched: {new Date(item.dispatchedAt).toLocaleString('en-IN', {
+                      <span className="whitespace-nowrap">Dispatched: {new Date(item.dispatchedAt).toLocaleString('en-IN', {
                         month: 'short',
                         day: 'numeric',
                         hour: '2-digit',
@@ -180,7 +183,7 @@ const IndividualOrderCard = ({ order, onDispatchItem, dispatchLoading, dispatchS
                   </div>
                 </div>
 
-                <div className="px-4 py-2 bg-purple-100 text-purple-800 rounded-lg text-sm font-medium">
+                <div className="px-4 py-2 bg-purple-100 text-purple-800 rounded-lg text-sm font-medium sm:flex-shrink-0">
                   🚚 Out for Delivery
                 </div>
               </div>
@@ -192,21 +195,21 @@ const IndividualOrderCard = ({ order, onDispatchItem, dispatchLoading, dispatchS
             const variantLabel = resolveOrderItemVariantLabel(item);
 
             return (
-              <div key={`delivered-${index}`} className="flex items-center justify-between p-4 bg-green-50 rounded-lg border border-green-200">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded">DELIVERED</span>
-                    <h5 className="font-medium text-gray-900">{item.productName}</h5>
+              <div key={`delivered-${index}`} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 bg-green-50 rounded-lg border border-green-200">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded whitespace-nowrap">DELIVERED</span>
+                    <h5 className="font-medium text-gray-900 truncate">{item.productName}</h5>
                   </div>
-                  <div className="flex items-center gap-4 text-sm text-gray-600 mt-1">
-                    <span>Category: {item.categoryName}</span>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-600 mt-1">
+                    <span className="whitespace-pre-wrap break-words">Category: {item.categoryName}</span>
                     {variantLabel && (
-                      <span>Variant: {variantLabel}</span>
+                      <span className="whitespace-pre-wrap break-words">Variant: {variantLabel}</span>
                     )}
                     <span>Qty: {item.quantity}</span>
                     <span>Price: ₹{item.price}</span>
                     {item.deliveredAt && (
-                      <span>Delivered: {new Date(item.deliveredAt).toLocaleString('en-IN', {
+                      <span className="whitespace-nowrap">Delivered: {new Date(item.deliveredAt).toLocaleString('en-IN', {
                         month: 'short',
                         day: 'numeric',
                         hour: '2-digit',
@@ -216,7 +219,7 @@ const IndividualOrderCard = ({ order, onDispatchItem, dispatchLoading, dispatchS
                   </div>
                 </div>
 
-                <div className="px-4 py-2 bg-green-100 text-green-800 rounded-lg text-sm font-medium">
+                <div className="px-4 py-2 bg-green-100 text-green-800 rounded-lg text-sm font-medium sm:flex-shrink-0">
                   ✅ Completed
                 </div>
               </div>
@@ -276,6 +279,8 @@ const AdminOrderTracking = () => {
     maxCount: 0,
     customCount: 1
   });
+  const fetchOrderDataRef = useRef(() => {});
+  const realtimeRefreshRef = useRef({ timeoutId: null });
   
   // Dropdown state management for order sections
   const [todaysOrdersExpanded, setTodaysOrdersExpanded] = useState(() => {
@@ -302,8 +307,9 @@ const AdminOrderTracking = () => {
         return;
       }
       
-      const apiBaseUrl = import.meta.env.VITE_API_URL;
-      
+      // Use VITE_VERCEL_API_URL for admin operations to ensure emails are sent from production backend
+      const apiBaseUrl = import.meta.env.VITE_VERCEL_API_URL || import.meta.env.VITE_API_URL;
+
       // Fetch both grouped and individual data
       const [groupedResponse, individualResponse] = await Promise.all([
         fetch(`${apiBaseUrl}/admin/orders/grouped`, {
@@ -373,6 +379,8 @@ const AdminOrderTracking = () => {
     }
   };
 
+  fetchOrderDataRef.current = fetchOrderData;
+
   // Refresh data function
   const handleRefresh = () => {
     console.log('Refresh button clicked - calling fetchOrderData with isRefresh=true');
@@ -426,6 +434,54 @@ const AdminOrderTracking = () => {
     
     return { todaysOrders, remainingOrders };
   };
+
+  useEffect(() => {
+    const socket = webSocketService.connect(null);
+    console.log('[AdminOrderTracking] WebSocket connection state:', socket?.connected, socket?.id);
+
+    const scheduleRefresh = (reason, payload) => {
+      console.log('[AdminOrderTracking] Scheduling refresh from real-time event:', reason, payload);
+      if (realtimeRefreshRef.current.timeoutId) {
+        clearTimeout(realtimeRefreshRef.current.timeoutId);
+      }
+
+      realtimeRefreshRef.current.timeoutId = setTimeout(() => {
+        realtimeRefreshRef.current.timeoutId = null;
+        if (typeof fetchOrderDataRef.current === 'function') {
+          fetchOrderDataRef.current(true);
+        }
+      }, 400);
+    };
+
+    const handleOrderStatusUpdated = (payload = {}) => {
+      console.log('[AdminOrderTracking] orderStatusUpdated event received:', payload);
+      scheduleRefresh('orderStatusUpdated', payload);
+    };
+
+    const handlePaymentUpdated = (payload = {}) => {
+      console.log('[AdminOrderTracking] paymentUpdated event received:', payload);
+      scheduleRefresh('paymentUpdated', payload);
+    };
+
+    const handleNewOrderPlaced = (payload = {}) => {
+      console.log('[AdminOrderTracking] newOrderPlaced event received:', payload);
+      scheduleRefresh('newOrderPlaced', payload);
+    };
+
+    webSocketService.onOrderStatusUpdated(handleOrderStatusUpdated);
+    webSocketService.onPaymentUpdated(handlePaymentUpdated);
+    webSocketService.onNewOrderPlaced(handleNewOrderPlaced);
+
+    return () => {
+      webSocketService.offOrderStatusUpdated(handleOrderStatusUpdated);
+      webSocketService.offPaymentUpdated(handlePaymentUpdated);
+      webSocketService.offNewOrderPlaced(handleNewOrderPlaced);
+      if (realtimeRefreshRef.current.timeoutId) {
+        clearTimeout(realtimeRefreshRef.current.timeoutId);
+        realtimeRefreshRef.current.timeoutId = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     fetchOrderData();
@@ -747,7 +803,8 @@ const AdminOrderTracking = () => {
       for (const order of todaysOrders) {
         for (const item of order.pendingItems || []) {
           try {
-            const apiBaseUrl = import.meta.env.VITE_API_URL;
+            // Use VITE_VERCEL_API_URL for dispatch operations to ensure emails are sent from production backend
+            const apiBaseUrl = import.meta.env.VITE_VERCEL_API_URL || import.meta.env.VITE_API_URL;
             const response = await fetch(`${apiBaseUrl}/admin/dispatch-item`, {
               method: 'POST',
               headers: {
@@ -813,7 +870,8 @@ const AdminOrderTracking = () => {
       for (const order of individualOrders) {
         for (const item of order.pendingItems || []) {
           try {
-            const apiBaseUrl = import.meta.env.VITE_API_URL;
+            // Use VITE_VERCEL_API_URL for dispatch operations to ensure emails are sent from production backend
+            const apiBaseUrl = import.meta.env.VITE_VERCEL_API_URL || import.meta.env.VITE_API_URL;
             const response = await fetch(`${apiBaseUrl}/admin/dispatch-item`, {
               method: 'POST',
               headers: {
@@ -871,7 +929,8 @@ const AdminOrderTracking = () => {
         return;
       }
       
-      const apiBaseUrl = import.meta.env.VITE_API_URL;
+      // Use VITE_VERCEL_API_URL for dispatch operations to ensure emails are sent from production backend
+      const apiBaseUrl = import.meta.env.VITE_VERCEL_API_URL || import.meta.env.VITE_API_URL;
       const response = await fetch(`${apiBaseUrl}/admin/dispatch-item`, {
         method: 'POST',
         headers: {
@@ -1017,8 +1076,8 @@ const AdminOrderTracking = () => {
         return updatedData;
       });
       
-      // Use environment variable for API base URL or fallback to relative path
-      const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+      // Use VITE_VERCEL_API_URL for dispatch operations to ensure emails are sent from production backend
+      const apiBaseUrl = import.meta.env.VITE_VERCEL_API_URL || import.meta.env.VITE_API_URL;
       const apiUrl = `${apiBaseUrl}/admin/dispatch`;
       
       const response = await fetch(apiUrl, {
@@ -1143,53 +1202,52 @@ const AdminOrderTracking = () => {
   const filteredOrderData = filterOrdersByStatus(orderData);
 
   return (
-    <div className="p-4 sm:p-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="mb-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">Order Tracking Dashboard</h1>
-            <p className="text-gray-600">Track and dispatch pending orders (showing only 'placed' orders)</p>
-          </div>
-          <div className="flex items-center gap-3">
-            {/* View Mode Toggle */}
-            <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
-              <button
-                onClick={() => {
-                  console.log('Switching to grouped view - data already up to date');
-                  setViewMode('grouped');
-                }}
-                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors duration-200 ${
-                  viewMode === 'grouped'
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                Grouped View
-              </button>
-              <button
-                onClick={() => setViewMode('individual')}
-                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors duration-200 ${
-                  viewMode === 'individual'
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                Order View
-              </button>
-            </div>
-            
+    <div className="px-4 sm:px-6 lg:px-8 py-6 md:py-8 max-w-7xl mx-auto">
+      {/* Header (Responsive like AdminOrders) */}
+      <div className="pt-16 md:pt-2 flex flex-col gap-4 2xl:flex-row 2xl:justify-between 2xl:items-start mb-6">
+        <div className="flex-1 min-w-0">
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 truncate">Order Tracking Dashboard</h1>
+          <p className="text-gray-600 mt-1 truncate">Track and dispatch pending orders (showing only 'placed' orders)</p>
+        </div>
+        <div className="flex flex-wrap gap-3 order-last 2xl:order-none">
+          {/* View Mode Toggle */}
+          <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 flex-shrink-0">
             <button
-              onClick={handleRefresh}
-              disabled={refreshing || loading}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 shadow-md hover:shadow-lg"
+              onClick={() => {
+                console.log('Switching to grouped view - data already up to date');
+                setViewMode('grouped');
+              }}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors duration-200 ${
+                viewMode === 'grouped'
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+              title="Grouped View"
             >
-              <FaSync className={`${refreshing ? 'animate-spin' : ''}`} />
-              <span className="font-medium">
-                {refreshing ? 'Refreshing...' : 'Refresh Data'}
-              </span>
+              Grouped View
+            </button>
+            <button
+              onClick={() => setViewMode('individual')}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors duration-200 ${
+                viewMode === 'individual'
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+              title="Order View"
+            >
+              Order View
             </button>
           </div>
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing || loading}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 shadow-md hover:shadow-lg flex-shrink-0"
+          >
+            <FaSync className={`${refreshing ? 'animate-spin' : ''}`} />
+            <span className="font-medium">
+              {refreshing ? 'Refreshing...' : 'Refresh Data'}
+            </span>
+          </button>
         </div>
       </div>
 
@@ -1260,7 +1318,7 @@ const AdminOrderTracking = () => {
                         onClick={() => setTodaysOrdersExpanded(!todaysOrdersExpanded)}
                         className="w-full bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-4 hover:from-blue-700 hover:to-blue-800 transition-all duration-200"
                       >
-                        <div className="flex items-center justify-between">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-left">
                           <div className="flex items-center gap-3">
                             <span className="text-2xl">📅</span>
                             <div className="text-left">
@@ -1275,7 +1333,7 @@ const AdminOrderTracking = () => {
                               </p>
                             </div>
                           </div>
-                          <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-3 sm:self-auto">
                             <span className="bg-blue-500 text-white px-3 py-1 rounded-full text-sm font-medium">
                               {todaysOrders.length} orders
                             </span>
@@ -1323,7 +1381,7 @@ const AdminOrderTracking = () => {
                         onClick={() => setPreviousOrdersExpanded(!previousOrdersExpanded)}
                         className="w-full bg-gradient-to-r from-gray-600 to-gray-700 text-white px-6 py-4 hover:from-gray-700 hover:to-gray-800 transition-all duration-200"
                       >
-                        <div className="flex items-center justify-between">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-left">
                           <div className="flex items-center gap-3">
                             <span className="text-2xl">📋</span>
                             <div className="text-left">
@@ -1331,7 +1389,7 @@ const AdminOrderTracking = () => {
                               <p className="text-gray-200 text-sm">Orders from previous days</p>
                             </div>
                           </div>
-                          <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-3 sm:self-auto">
                             <span className="bg-gray-500 text-white px-3 py-1 rounded-full text-sm font-medium">
                               {remainingOrders.length} orders
                             </span>

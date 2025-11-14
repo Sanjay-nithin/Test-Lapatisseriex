@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -320,8 +320,7 @@ const NotificationSidePanel = ({ isOpen, onClose, onUnreadCountChange }) => {
     if (productName.length > 18) productName = productName.slice(0, 15) + '...';
     const fallbacks = {
       'order_dispatched': 'Order Dispatched',
-      'order_delivered': 'Order Delivered',
-    };
+      'order_delivered': 'Order Delivered'};
     return { text: productName || fallbacks[notification.type] || 'Order Update', price: extractPrice(notification, true) };
   };
   
@@ -354,9 +353,9 @@ const NotificationSidePanel = ({ isOpen, onClose, onUnreadCountChange }) => {
                 left: 0,
                 right: 0,
                 bottom: 0,
-                backgroundColor: 'rgba(40, 28, 32, 0.5)',
-                backdropFilter: 'blur(8px)',
-                zIndex: 999998
+                backgroundColor: 'rgba(40, 28, 32, 0.3)',
+                backdropFilter: 'blur(4px)',
+                zIndex: 59
               }}
             />
             
@@ -374,16 +373,14 @@ const NotificationSidePanel = ({ isOpen, onClose, onUnreadCountChange }) => {
               style={{
                 position: 'fixed',
                 right: 0,
-                top: 0,
-                height: '100vh',
+                top: '5rem',
+                height: 'calc(100vh - 5rem)',
                 width: '100%',
                 backgroundColor: '#ffffff',
-                zIndex: 999999,
+                zIndex: 60,
                 display: 'flex',
                 flexDirection: 'column',
-                overflow: 'hidden',
-                fontFamily: 'system-ui, -apple-system, sans-serif'
-              }}
+                overflow: 'hidden'}}
             >
             <style jsx>{`
               @media (min-width: 640px) {
@@ -394,6 +391,8 @@ const NotificationSidePanel = ({ isOpen, onClose, onUnreadCountChange }) => {
               @media (min-width: 768px) {
                 .luxury-shadow {
                   max-width: 520px !important;
+                  top: 5rem !important;
+                  height: calc(100vh - 5rem) !important;
                 }
               }
               @media (min-width: 1024px) {
@@ -404,6 +403,12 @@ const NotificationSidePanel = ({ isOpen, onClose, onUnreadCountChange }) => {
               @media (min-width: 1280px) {
                 .luxury-shadow {
                   max-width: 600px !important;
+                }
+              }
+              @media (max-width: 767px) {
+                .luxury-shadow {
+                  top: 0 !important;
+                  height: 100vh !important;
                 }
               }
             `}</style>
@@ -561,12 +566,10 @@ const NotificationSidePanel = ({ isOpen, onClose, onUnreadCountChange }) => {
                           backgroundColor: !notification.read 
                             ? 'rgba(115, 56, 87, 0.02)' 
                             : '#ffffff',
-                          borderBottom: '1px solid rgba(115, 56, 87, 0.08)',
-                        }}
+                          borderBottom: '1px solid rgba(115, 56, 87, 0.08)'}}
                         whileHover={{
                           scale: 1.01,
-                          backgroundColor: 'rgba(115, 56, 87, 0.05)',
-                        }}
+                          backgroundColor: 'rgba(115, 56, 87, 0.05)'}}
                         whileTap={{ scale: 0.99 }}
                       >
                         <div className="p-3 sm:p-5">

@@ -1,193 +1,81 @@
-# La Patisserie X - Authentication System
+# La Patisserie
 
-This repository contains both the frontend and backend code for the La Patisserie X authentication system using Firebase Google Sign-In, Email/Password Authentication, Firebase Admin SDK, and MongoDB with role-based access.
+Delicious pastries, cakes, and treats — ordered in a few taps and delivered with care.
 
-## Project Structure
+Last updated: November 12, 2025
 
-```
-LapatisseriexFrontned/ - React frontend with Vite & Tailwind CSS
-backend/             - Node.js Express backend API
-```
+## What is this?
 
-## Frontend
+La Patisserie is an online ordering experience for our bakery. Browse the menu, add your favorites to the cart, choose delivery or pickup, and check out securely. We’ll keep you updated as your order is prepared and on its way.
 
-### Technologies Used
-- React 19 with Vite
-- Tailwind CSS for styling
-- Firebase Web SDK for Phone Authentication
-- Axios for API requests
-- React Router DOM for routing
+## What you can do
 
-### Features
-- Google Sign-In and Email/Password authentication with Firebase
-- Email verification using OTP (in profile settings)
-- New user profile creation
-- Role-based UI (admin vs regular user)
-- Protected routes for authenticated users and admins
+- Explore our full menu with photos and categories
+- Save favorites for quick re-ordering
+- Add items to your cart and choose delivery or pickup
+- Pay online securely
+- Track your order status with email or SMS updates
+- Join our loyalty program to earn rewards on every order
+- Subscribe to the newsletter for deals and new items
 
-### Setup
+## How ordering works
 
-1. Navigate to the frontend directory:
-```
-cd LapatisseriexFrontned
-```
+1) Pick your items: Browse categories and add what you’d like to your cart.
 
-2. Install dependencies:
-```
-npm install
-```
+2) Choose delivery or pickup: Enter your address to check availability, or select a pickup location and time.
 
-3. Copy the `.env.example` file to `.env` and update with your Firebase configuration:
-```
-cp .env.example .env
-```
+3) Pay and relax: Complete secure checkout. We’ll send updates as your order is confirmed, prepared, and delivered or ready for pickup.
 
-4. Update the `.env` file with your Firebase configuration
+## Delivery and pickup
 
-5. Run the development server:
-```
-npm run dev
-```
+- Delivery availability depends on your address and time of day. You’ll see available options during checkout.
+- Pickup is available at selected locations and times.
+- If you don’t see delivery at your address, try pickup or check again later for updated coverage.
 
-## Backend
+## Payments
 
-### Technologies Used
-- Node.js with Express
-- Firebase Admin SDK for token verification
-- MongoDB with Mongoose for user data storage
-- JSON Web Token for authentication
+- We support common online payment methods.
+- Your payment is processed securely; we don’t store full card details.
 
-### Features
-- Firebase ID token verification
-- User creation and management
-- Role-based access control
-- Protected API endpoints
+## Rewards and loyalty
 
-### Cart API (DB-backed)
+- Earn points on eligible purchases
+- Redeem points for discounts or treats when you have enough
+- You can view your points and rewards in your account
 
-The cart is persisted in MongoDB (not in cache) using the `NewCart` model. Each user has exactly one cart identified by their Firebase UID. Cart items embed a `productId` reference to `Product` and include quantity, an `addedAt` timestamp, and a product snapshot for stable display.
+## Promotions and free treats
 
-Key fields stored:
-- userId: string (Firebase UID) — unique per cart
-- items[].productId: ObjectId ref to Product
-- items[].quantity: number (>= 1)
-- items[].addedAt: Date
-- items[].productDetails: snapshot fields for UI and pricing (name, price, image, category, hasEgg, variantIndex, variants[], selectedVariant)
-- timestamps: createdAt/updatedAt on both cart and items
+- From time to time, special offers or free items may be available
+- Look for badges on the menu or messages at checkout.
 
-Endpoints (all require Authorization: Bearer <Firebase ID token>):
-- GET /api/newcart — Get current user's cart with product snapshot
-- GET /api/newcart/count — Get total item count
-- POST /api/newcart — Add/update an item
-	- body: { productId: string, quantity?: number = 1, variantIndex?: number = 0 }
-- PUT /api/newcart/:productId — Set absolute quantity for a product
-	- body: { quantity: number }
-- DELETE /api/newcart/:productId — Remove a product from cart
-- DELETE /api/newcart — Clear entire cart
+## Donations (optional)
 
-Notes:
-- Stock is validated (when variant tracks stock) but not decremented on add-to-cart. Stock is decremented during order completion.
-- Product details are refreshed on GET to reflect the latest product state (e.g., price/images), while preserving the selected variant.
+- You may see an option to add a small donation at checkout to support local causes
+- 100% of your donation goes to the designated initiative
 
-Sample add-to-cart request:
+## Notifications
 
-```
-POST /api/newcart
-Authorization: Bearer <token>
-Content-Type: application/json
+- Choose to receive order updates via email and/or SMS
+- You can adjust your preferences in your account
 
-{
-	"productId": "6741c9d9a3...",
-	"quantity": 2,
-	"variantIndex": 0
-}
-```
+## Your account
 
-Sample response (abridged):
+- Create an account to save your details, addresses, and favorites
+- Manage your profile, view past orders, and track rewards
+- Forgot your password? Use “Forgot password” on the sign-in page to reset it
 
-```
-{
-	"_id": "...",
-	"userId": "firebase-uid",
-	"items": [
-		{
-			"productId": "6741c9d9a3...",
-			"quantity": 2,
-			"productDetails": {
-				"name": "Chocolate Cake",
-				"price": 499,
-				"image": "https://...",
-				"category": "Cakes",
-				"hasEgg": false,
-				"variantIndex": 0,
-				"variants": [ ... ],
-				"selectedVariant": { ... }
-			},
-			"addedAt": "2025-10-23T06:11:00.000Z"
-		}
-	],
-	"cartTotal": 998,
-	"cartCount": 2,
-	"lastUpdated": "2025-10-23T06:11:00.000Z"
-}
-```
+## Privacy
 
-### Setup
+- We use your information only to provide and improve the ordering experience
+- You control your communication preferences
+- To request data deletion or ask privacy questions, contact us using the details below
 
-1. Navigate to the backend directory:
-```
-cd backend
-```
+## Need help?
 
-2. Install dependencies:
-```
-npm install
-```
+- Use the “Contact us” page in the app for the fastest response
+- Or email our support team: support@lapatisserie.example (replace with your real address)
 
-3. Copy the `.env.example` file to `.env` and update with your configuration:
-```
-cp .env.example .env
-```
+## For the La Patisserie team
 
-4. Update the `.env` file with your Firebase Admin SDK credentials and MongoDB URI
+If you’re looking for logo/static asset info used in emails and on the site, see `backend/public/README.md`.
 
-5. Run the development server:
-```
-npm run dev
-```
-
-## Authentication Methods
-
-### 1. Google Sign-In
-- One-click authentication using Google OAuth
-- Automatic profile creation with Google account info
-
-### 2. Email/Password Authentication
-- Traditional email and password signup/login
-- Email verification for new accounts
-
-### 3. Email Verification (Profile Settings)
-- OTP-based email verification for updating email addresses
-- Secure email change process
-
-## Authentication Flow
-
-1. User chooses authentication method (Google or Email/Password)
-2. Firebase handles authentication
-3. Frontend receives Firebase ID token
-4. Backend verifies token using Firebase Admin SDK
-5. Backend creates/updates user in MongoDB with email as primary identifier
-6. Role-based access and UI is provided
-
-## Admin Access
-
-- Email: admin@lapatisserie.com (automatically assigned admin role)
-- Any user with the admin email gets admin privileges
-
-## API Endpoints
-
-- POST /api/auth/verify - Verify Firebase ID token
-- GET /api/users/me - Get current user profile
-- PUT /api/users/:id - Update user profile
-- GET /api/users - Get all users (admin only)
-- GET /api/users/:id - Get user by ID (admin only)

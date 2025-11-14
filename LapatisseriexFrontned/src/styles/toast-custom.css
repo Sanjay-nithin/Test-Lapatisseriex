@@ -32,7 +32,7 @@
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   border-radius: 8px !important;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
   font-weight: 300 !important;
   min-height: 64px !important;
 }
@@ -55,7 +55,7 @@
 .Toastify__toast-body,
 .Toastify__toast-body > div {
   color: #1a1a1a !important;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
   font-weight: 300 !important;
   padding: 8px !important;
   line-height: 1.5 !important;
@@ -127,4 +127,39 @@
 .Toastify__toast-body *,
 .Toastify__toast div {
   color: #1a1a1a !important;
+}
+
+/* Custom Auth Toast Styling */
+.custom-auth-toast {
+  background: white !important;
+  border: 1px solid #d9c4cd !important;
+  box-shadow: 0 4px 16px rgba(115, 56, 87, 0.15) !important;
+  border-radius: 12px !important;
+  padding: 16px !important;
+  max-width: 400px !important;
+  min-width: 280px !important;
+}
+
+.custom-auth-toast-body {
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.custom-auth-toast * {
+  color: inherit !important;
+}
+
+/* Responsive adjustments for mobile */
+@media (max-width: 640px) {
+  .custom-auth-toast {
+    max-width: 320px !important;
+    min-width: 260px !important;
+    margin: 0 16px !important;
+  }
+  
+  .Toastify__toast-container {
+    width: calc(100vw - 32px) !important;
+    left: 16px !important;
+    right: 16px !important;
+  }
 }

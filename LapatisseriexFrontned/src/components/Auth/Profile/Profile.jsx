@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { useAuth } from '../../../hooks/useAuth';
 import { useSelector } from 'react-redux';
@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import EmailVerification from './EmailVerification';
 import PhoneVerification from './PhoneVerification';
+import { toast } from 'react-hot-toast';
 
 // A portal-based overlay that renders at the document.body level so it always sits on top
 const LoadingOverlayPortal = ({ show }) => {
@@ -72,8 +73,7 @@ const LoadingOverlayPortal = ({ show }) => {
           zIndex: 999999,
           pointerEvents: isVisible ? 'all' : 'none',
           backgroundColor: isVisible ? 'rgba(0, 0, 0, 0.5)' : 'transparent',
-          backdropFilter: isVisible ? 'blur(4px)' : 'none',
-        }}
+          backdropFilter: isVisible ? 'blur(4px)' : 'none'}}
       >
         <div className={`bg-white rounded-lg shadow-2xl p-8 w-full max-w-sm mx-4 transform transition-all duration-300 ${
           isVisible ? 'scale-100 opacity-100' : 'scale-95 opacity-0'
@@ -99,21 +99,20 @@ const LoadingOverlayPortal = ({ show }) => {
                   borderTopColor: 'transparent',
                   position: 'absolute',
                   top: 0,
-                  left: 0,
-                }}
+                  left: 0}}
               />
             </div>
             {/* Loading Text */}
             <div className="text-center w-full">
               <h3
                 className="text-xl font-bold text-black mb-2 text-center"
-                style={{ fontFamily: 'system-ui, -apple-system, sans-serif', textAlign: 'center' }}
+                style={{ textAlign: 'center' }}
               >
                 Updating Your Profile
               </h3>
               <p
                 className="text-gray-600 text-sm text-center"
-                style={{ fontFamily: 'system-ui, -apple-system, sans-serif', textAlign: 'center' }}
+                style={{ textAlign: 'center' }}
               >
                 Please wait while we save your changes...
               </p>
@@ -132,7 +131,7 @@ const LoadingOverlayPortal = ({ show }) => {
   );
 };
 
-const Profile = () => {
+const Profile = ({ onDirtyChange }) => {
   const { user, updateProfile, authError, loading, isNewUser, updateUser, getCurrentUser } = useAuth();
   const { locations, loading: locationsLoading, fetchLocations } = useLocation();
   const { hostels, loading: hostelsLoading, fetchHostelsByLocation, clearHostels } = useHostel();
@@ -140,9 +139,11 @@ const Profile = () => {
   const currentUser = useSelector(state => state.auth.user);
   const [localError, setLocalError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
-  const [isEditMode, setIsEditMode] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(true);
   const [isSaving, setIsSaving] = useState(false); // Local saving state for more control
   const savingRef = useRef(false); // Ref to track saving state across re-renders
+  const baselineRef = useRef(null); // Baseline snapshot for dirty tracking
+  const [isDirty, setIsDirty] = useState(false);
   
   // Common CSS classes for form fields
   const inputClasses = `w-full pl-10 pr-4 py-3 border border-gray-300 rounded-none 
@@ -336,70 +337,16 @@ const Profile = () => {
   // Format today's date for max value in date inputs
   const today = new Date().toISOString().split('T')[0];
   
-  // Restore edit mode state from localStorage if available
+  // Always editable; no need to restore edit mode from localStorage
   useEffect(() => {
-    const savedEditMode = localStorage.getItem('profileEditMode');
-    if (savedEditMode === 'true') {
-      setIsEditMode(true);
-      
-      // If in edit mode, try to recover form data from localStorage
-      try {
-        const savedFormData = localStorage.getItem('profileFormData');
-        if (savedFormData) {
-          const parsedFormData = JSON.parse(savedFormData);
-          console.log('Recovering form data after refresh:', parsedFormData);
-          
-          // First get cached user data for fallback
-          let cachedUserData = {};
-          try {
-            const cachedUser = localStorage.getItem('cachedUser');
-            if (cachedUser) {
-              cachedUserData = JSON.parse(cachedUser);
-            }
-          } catch (err) {
-            console.error('Error parsing cached user:', err);
-          }
-          
-          // Make sure email is always available
-          if (!parsedFormData.email) {
-            if (cachedUserData.email) {
-              parsedFormData.email = cachedUserData.email;
-            } else if (user?.email) {
-              parsedFormData.email = user.email;
-            }
-            console.log('Email missing in saved form data, using fallback email:', parsedFormData.email);
-          }
-          
-          // Make sure all date fields are correctly formatted
-          if (parsedFormData.dob && !(parsedFormData.dob instanceof String) && typeof parsedFormData.dob !== 'string') {
-            parsedFormData.dob = formatDate(parsedFormData.dob);
-          }
-          
-          if (parsedFormData.anniversary && !(parsedFormData.anniversary instanceof String) && typeof parsedFormData.anniversary !== 'string') {
-            parsedFormData.anniversary = formatDate(parsedFormData.anniversary);
-          }
-          
-          // Use our helper function for consistent form data recovery
-          const mergedUserData = {
-            ...user,
-            ...cachedUserData,
-            location: typeof user?.location === 'object' ? user?.location?._id || '' : user?.location || '',
-            hostel: typeof user?.hostel === 'object' ? user?.hostel?._id || '' : user?.hostel || '',
-          };
-          
-          const restoredForm = createInitialFormData(mergedUserData, parsedFormData);
-          console.log('Restored form data with anniversary:', restoredForm);
-          setFormData(restoredForm);
-          
-          // Re-save the complete form data to localStorage to ensure consistency
-          const dataToCache = {
-            ...restoredForm
-          };
-          localStorage.setItem('profileFormData', JSON.stringify(dataToCache));
-        }
-      } catch (error) {
-        console.error('Error recovering form data:', error);
+    try {
+      const savedFormData = localStorage.getItem('profileFormData');
+      if (savedFormData) {
+        const parsedFormData = JSON.parse(savedFormData);
+        setFormData(prev => ({ ...prev, ...parsedFormData }));
       }
+    } catch (error) {
+      console.error('Error recovering form data:', error);
     }
   }, []);
 
@@ -437,30 +384,13 @@ const Profile = () => {
     }
   }, [formData, isEditMode]);
 
-  // Cleanup effect to reset edit mode when component unmounts
+  // Cleanup effect on unmount (just clear persisted form snapshot)
   useEffect(() => {
     return () => {
-      // Reset edit mode in localStorage when component unmounts
-      localStorage.removeItem('profileEditMode');
       localStorage.removeItem('profileFormData');
-      console.log('Profile component cleanup: Reset edit mode and cleared form data');
+      console.log('Profile component cleanup: cleared persisted form data');
     };
   }, []);
-
-  // Effect to reset edit mode when navigating away from profile section
-  useEffect(() => {
-    const currentPath = routerLocation.pathname;
-    
-    // Check if user navigated away from profile-related pages
-    if (!currentPath.includes('/profile')) {
-      if (isEditMode) {
-        console.log('User navigated away from profile, resetting edit mode');
-        setIsEditMode(false);
-        localStorage.removeItem('profileEditMode');
-        localStorage.removeItem('profileFormData');
-      }
-    }
-  }, [routerLocation.pathname, isEditMode]);
   
   // useEffect to handle user state changes (like phone verification)
   useEffect(() => {
@@ -547,8 +477,7 @@ const Profile = () => {
         ...cachedUserData,
         // Keep the nested objects properly formatted
         location: currentLocationId || '',
-        hostel: currentHostelId || '',
-      };
+        hostel: currentHostelId || ''};
       
       // Then create the form data with proper precedence
       const initialFormData = createInitialFormData(mergedUserData, savedFormData);
@@ -556,6 +485,18 @@ const Profile = () => {
       
       // Update form data state
       setFormData(initialFormData);
+      // Initialize dirty baseline
+      baselineRef.current = {
+        name: initialFormData.name || '',
+        gender: initialFormData.gender || '',
+        dob: initialFormData.dob || '',
+        anniversary: initialFormData.anniversary || '',
+        country: initialFormData.country || 'India',
+        location: initialFormData.location || '',
+        hostel: initialFormData.hostel || ''
+      };
+      setIsDirty(false);
+      if (onDirtyChange) onDirtyChange(false);
       
       // Save the complete form data to localStorage for refresh protection
       const dataToCache = {
@@ -602,15 +543,31 @@ const Profile = () => {
       }));
     }
     
-    // If we're in edit mode, immediately update localStorage for persistence
-    // This ensures even partial changes are saved during editing
-    if (isEditMode && (name === 'anniversary' || name === 'dob')) {
+    // Persist partial changes for dates
+    if (name === 'anniversary' || name === 'dob') {
       const currentData = {
         ...formData,
         [name]: processedValue
       };
       localStorage.setItem('profileFormData', JSON.stringify(currentData));
       console.log(`Updated ${name} in localStorage:`, processedValue);
+    }
+
+    // Dirty tracking vs baseline
+    if (baselineRef.current) {
+      const comparable = {
+        name: name === 'name' ? processedValue : formData.name,
+        gender: name === 'gender' ? processedValue : formData.gender,
+        dob: name === 'dob' ? processedValue : formData.dob,
+        anniversary: name === 'anniversary' ? processedValue : formData.anniversary,
+        country: name === 'country' ? processedValue : formData.country,
+        location: name === 'location' ? processedValue : formData.location,
+        hostel: name === 'hostel' ? processedValue : formData.hostel};
+      const dirtyNow = JSON.stringify(comparable) !== JSON.stringify(baselineRef.current);
+      if (dirtyNow !== isDirty) {
+        setIsDirty(dirtyNow);
+        if (onDirtyChange) onDirtyChange(dirtyNow);
+      }
     }
   };
 
@@ -713,9 +670,19 @@ const Profile = () => {
         }, 400);
         // Wait a moment to show success, then exit edit mode and scroll to bottom
         setTimeout(() => {
-          setIsEditMode(false);
-          localStorage.removeItem('profileEditMode');
-        }, 2500); // Increased to 2.5 seconds to show success message longer
+          // Update baseline after successful save for dirty tracking
+          baselineRef.current = {
+            name: formData.name || '',
+            gender: formData.gender || '',
+            dob: typeof formData.dob === 'string' ? formData.dob : formatDate(formData.dob),
+            anniversary: typeof formData.anniversary === 'string' ? formData.anniversary : formatDate(formData.anniversary),
+            country: formData.country || 'India',
+            location: formData.location || '',
+            hostel: formData.hostel || ''
+          };
+          setIsDirty(false);
+          if (onDirtyChange) onDirtyChange(false);
+        }, 2500); // Keep success message visible before clearing dirty state
 
         // Save user data to localStorage
         const savedUserData = JSON.parse(localStorage.getItem('savedUserData') || '{}');
@@ -804,89 +771,35 @@ const Profile = () => {
   };
 
   const handleCancel = () => {
-    if (user) {
-      // IMPORTANT: Instead of resetting to user values completely, we need to preserve
-      // certain fields like email and anniversary from the current form data
-      
-      // Get the current form data values we want to preserve
-  const currentEmail = user.email || '';
-      const currentAnniversary = formData.anniversary || formatDate(user.anniversary) || '';
-  // Email verification flow removed; preserve existing form values only
-      
-      // Log current values to verify we're preserving them
-      console.log('Preserving current values on cancel:', {
-  // email removed from UI; do not bind to form state
-        anniversary: currentAnniversary,
-  // email verification removed
-      });
-      
-      // Create form data while keeping the existing values
+    // Revert form to original baseline snapshot if available
+    if (baselineRef.current) {
+      setFormData({ ...baselineRef.current });
+    } else if (user) {
+      // Fallback: reconstruct from user
       setFormData({
         name: user.name || '',
         phone: user.phone || '',
-        email: currentEmail, // Keep the existing email
+        email: user.email || '',
         dob: formatDate(user.dob) || '',
         gender: user.gender || '',
-        anniversary: currentAnniversary, // Keep the existing anniversary
+        anniversary: formatDate(user.anniversary) || '',
         country: user.country || 'India',
         location: typeof user.location === 'object' ? user.location?._id || '' : user.location || '',
         hostel: typeof user.hostel === 'object' ? user.hostel?._id || '' : user.hostel || ''
       });
-      
-  // email verification removed
     }
-    
-    setIsEditMode(false);
-    localStorage.removeItem('profileEditMode');
-    
-  // email verification removed
-    
-    // Update the cached user data to include preserved values
-    if (user) {
-      const cachedUser = JSON.parse(localStorage.getItem('cachedUser') || '{}');
-      
-  // email verification removed
-      
-      // Keep email and anniversary from the form data
-  // do not modify cached email here
-      cachedUser.anniversary = formData.anniversary || user.anniversary || '';
-      
-      // Keep other fields
-      if (user.dob) {
-        cachedUser.dob = user.dob;
-      }
-      
-      localStorage.setItem('cachedUser', JSON.stringify(cachedUser));
-      console.log('Updated cached user data with preserved email and anniversary:', cachedUser);
-    }
-    
-    // Clear error and success messages
+    // Reset dirty state and notify parent so buttons disappear
+    setIsDirty(false);
+    if (onDirtyChange) onDirtyChange(false);
     setLocalError('');
     setSuccessMessage('');
+    toast('Changes discarded.', {
+      icon: '↩️',
+      duration: 3000
+    });
   };
 
-  const handleEditProfile = () => {
-    setIsEditMode(true);
-    localStorage.setItem('profileEditMode', 'true');
-    setLocalError('');
-    setSuccessMessage('');
-    
-    // email verification removed
-    
-    // Ensure all date fields are properly formatted strings before saving
-    const formDataToSave = {
-      ...formData,
-      // Explicitly format date fields to ensure consistency
-      dob: typeof formData.dob === 'string' ? formData.dob : formatDate(formData.dob),
-  anniversary: typeof formData.anniversary === 'string' ? formData.anniversary : formatDate(formData.anniversary)
-    };
-    
-    // Always save the complete current form data to localStorage for consistency
-    // This ensures we have a backup of all fields even after multiple refreshes
-    localStorage.setItem('profileFormData', JSON.stringify(formDataToSave));
-    
-    console.log('Entering edit mode with complete form data:', formDataToSave);
-  };
+  const handleEditProfile = () => { /* no-op: always editable */ };
 
 
 
@@ -907,47 +820,74 @@ const Profile = () => {
 
   return (
     <>
-      {/* Hero Section - Header Style */}
-      <div className="bg-white border-b border-gray-200">
-        {/* Reduced mobile padding: py-4 instead of py-8 for mobile, keeps py-8 for desktop */}
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4 md:py-8">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-            {/* Profile Image */}
-            <div className="relative">
-              <div className="relative">
-                <ProfileImageUpload isEditMode={isEditMode} />
+      {/* Hero Section - Elegant Dessert Shop Style */}
+      <div className="relative overflow-hidden" style={{
+        background: 'linear-gradient(135deg, #FFF5F0 0%, #FFFFFF 50%, #FFF5F0 100%)',
+        borderBottom: '1px solid rgba(115, 56, 87, 0.1)'
+      }}>
+        {/* Decorative Elements */}
+        <div className="absolute top-0 right-0 w-32 h-32 sm:w-48 sm:h-48 opacity-[0.03]" style={{
+          background: 'radial-gradient(circle, #733857 0%, transparent 70%)'}}></div>
+        <div className="absolute bottom-0 left-0 w-24 h-24 sm:w-32 sm:h-32 opacity-[0.03]" style={{
+          background: 'radial-gradient(circle, #8d4466 0%, transparent 70%)'}}></div>
+        
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 lg:py-10">
+          <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6 lg:gap-8">
+            {/* Profile Image - Elegant Frame */}
+            <div className="relative flex-shrink-0">
+              <div className="relative group">
+                {/* Decorative corner accents */}
+                <div className="absolute -top-2 -left-2 w-16 h-16 border-l-2 border-t-2 opacity-20 transition-opacity duration-300 group-hover:opacity-40" style={{borderColor: '#733857'}}></div>
+                <div className="absolute -bottom-2 -right-2 w-16 h-16 border-r-2 border-b-2 opacity-20 transition-opacity duration-300 group-hover:opacity-40" style={{borderColor: '#733857'}}></div>
+                
+                <div className="relative">
+                  <ProfileImageUpload isEditMode={true} />
+                </div>
               </div>
-             
             </div>
             
-            {/* User Info & Actions */}
-            <div className="flex-1 text-center md:text-left">
-              <div className="flex items-center justify-center md:justify-start gap-3 mb-2">
-                <h1 className="text-3xl font-bold text-black" style={{color: '#281c20', fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+            {/* User Info - Center on mobile, left on desktop */}
+            <div className="flex-1 text-center sm:text-left">
+              <div className="mb-2">
+                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-semibold tracking-tight mb-1" style={{
+                  color: '#281c20',
+                  letterSpacing: '0.01em'
+                }}>
                   {formData.name || 'Welcome Back'}
                 </h1>
-              
+                <p className="text-xs sm:text-sm" style={{
+                  color: 'rgba(40, 28, 32, 0.6)',
+                  letterSpacing: '0.03em'
+                }}>
+                  Manage your sweet preferences & delivery details
+                </p>
               </div>
-              <p className="text-gray-600 mb-4" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>Manage your sweet preferences & delivery details</p>
               
-              {/* Quick Stats */}
-              <div className="flex items-center justify-center md:justify-start gap-4 text-sm">
-                <div className="flex items-center gap-1 text-gray-500" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
-                  <MapPinned className="h-4 w-4" />
-                  <span>
+              {/* Quick Stats - Elegant Pills */}
+              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 sm:gap-3">
+                <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm transition-all duration-300 hover:shadow-sm" style={{
+                  backgroundColor: 'rgba(115, 56, 87, 0.05)',
+                  border: '1px solid rgba(115, 56, 87, 0.1)',
+                  borderRadius: '20px',
+                  color: '#733857'}}>
+                  <MapPinned className="h-3 w-3 sm:h-4 sm:w-4" strokeWidth={1.5} />
+                  <span className="font-medium">
                     {formData.location 
-                      ? locations.find(loc => loc._id === formData.location)?.name || 'Location Set'
+                      ? locations.find(loc => loc._id === formData.location)?.area || 'Location Set'
                       : 'Set Location'}
                   </span>
                 </div>
-                <div className="flex items-center gap-1 text-gray-500" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
-                  <Cake className="h-4 w-4" />
-                  <span>
+                <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm transition-all duration-300 hover:shadow-sm" style={{
+                  backgroundColor: 'rgba(190, 24, 93, 0.05)',
+                  border: '1px solid rgba(190, 24, 93, 0.1)',
+                  borderRadius: '20px',
+                  color: '#BE185D'}}>
+                  <Cake className="h-3 w-3 sm:h-4 sm:w-4" strokeWidth={1.5} />
+                  <span className="font-medium">
                     {formData.dob 
                       ? new Date(formData.dob).toLocaleDateString('en-US', { 
                           month: 'short', 
-                          day: 'numeric', 
-                          year: 'numeric' 
+                          day: 'numeric'
                         })
                       : 'Add Birthday'}
                   </span>
@@ -955,14 +895,27 @@ const Profile = () => {
               </div>
             </div>
             
-            {/* Edit Button - Header Style */}
+            {/* Edit Button - Refined Style */}
             {!isEditMode && (
               <button
                 onClick={handleEditProfile}
-                className="group relative px-8 py-3 bg-black text-white overflow-hidden shadow-sm hover:shadow-md transition-all duration-300" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}
+                className="group relative px-6 sm:px-8 py-2.5 sm:py-3 overflow-hidden transition-all duration-300 hover:shadow-lg"
+                style={{
+                  backgroundColor: '#733857',
+                  color: 'white',
+                  border: '1px solid rgba(115, 56, 87, 0.2)'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#5a2b43';
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#733857';
+                  e.currentTarget.style.transform = 'translateY(0)';
+                }}
               >
-                <span className="relative flex items-center gap-2 font-semibold">
-                  <Edit3 className="h-4 w-4" />
+                <span className="relative flex items-center gap-2 font-medium text-sm">
+                  <Edit3 className="h-4 w-4" strokeWidth={2} />
                   Edit Profile
                 </span>
               </button>
@@ -971,12 +924,14 @@ const Profile = () => {
         </div>
       </div>
       
-      {/* Main content container - Reduced mobile padding: py-4 instead of py-8 for mobile */}
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4 md:py-8 relative">
+      {/* Main content container - Elegant spacing */}
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 lg:py-10 relative" style={{
+        background: 'linear-gradient(to bottom, #FDFBF9 0%, #FFFFFF 100%)'
+      }}>
 
       <form 
         onSubmit={handleSubmit} 
-        className="profile-form-mobile space-y-8 pb-20 md:pb-6"
+        className="profile-form-mobile space-y-6 sm:space-y-8 pb-20 md:pb-6"
         onFocus={(e) => {
           // Prevent any scroll when form elements get focus
           if (savingRef.current) {
@@ -1001,10 +956,10 @@ const Profile = () => {
                 </div>
                 {/* Success Text */}
                 <div className="flex-1">
-                  <h3 className="text-lg font-bold text-gray-900 mb-1" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+                  <h3 className="text-lg font-bold text-gray-900 mb-1">
                     {successMessage}
                   </h3>
-                  <p className="text-gray-600 text-sm" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+                  <p className="text-gray-600 text-sm">
                     Your profile has been updated successfully!
                   </p>
                 </div>
@@ -1020,58 +975,80 @@ const Profile = () => {
           </div>
         )}
         
-        {/* Error Message - Fixed Position at Top */}
+        {/* Error Message - High-Visibility Banner */}
         {localError && !isSaving && (
-          <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-[9998] w-full max-w-md mx-4 animate-slideDown">
-            <div className="bg-white border-2 border-red-500 rounded-lg shadow-2xl p-6 transform transition-all duration-300">
-              <div className="flex items-start space-x-4">
-                {/* Error Icon */}
-                <div className="flex-shrink-0">
-                  <div className="w-12 h-12 bg-red-500 rounded-full flex items-center justify-center">
-                    <X className="h-7 w-7 text-white" />
+          <div className="fixed top-0 left-0 right-0 z-[9998] px-4 sm:px-6 lg:px-8 py-4 shadow-lg animate-slideDown">
+            <div className="max-w-3xl mx-auto">
+              <div className="relative overflow-hidden rounded-xl border-2 bg-gradient-to-r from-red-600 via-red-500 to-red-600">
+                {/* Decorative sheen */}
+                <div className="absolute inset-0 opacity-20" style={{background: 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.9), transparent 70%)'}}></div>
+                <div className="relative flex items-start gap-4 p-5 sm:p-6">
+                  <div className="flex-shrink-0 mt-1">
+                    <div className="w-14 h-14 rounded-full flex items-center justify-center ring-4 ring-white/30 bg-white/10 backdrop-blur-sm">
+                      <X className="h-8 w-8 text-white" strokeWidth={2.5} />
+                    </div>
                   </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-xl sm:text-2xl font-bold tracking-wide mb-1" style={{ letterSpacing: '0.03em', color: '#ffffff'}}>
+                      Something went wrong
+                    </h3>
+                    <p className="text-sm sm:text-base font-medium leading-relaxed" style={{ color: 'rgba(255,255,255,0.92)'}}>
+                      {localError}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setLocalError('')}
+                    className="ml-2 flex-shrink-0 text-white/80 hover:text-white transition-colors"
+                    aria-label="Dismiss error"
+                  >
+                    <X className="h-6 w-6" />
+                  </button>
                 </div>
-                {/* Error Text */}
-                <div className="flex-1">
-                  <h3 className="text-lg font-bold text-gray-900 mb-1" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
-                    Error
-                  </h3>
-                  <p className="text-gray-600 text-sm" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>
-                    {localError}
-                  </p>
-                </div>
-                {/* Close Button */}
-                <button
-                  onClick={() => setLocalError('')}
-                  className="flex-shrink-0 text-gray-400 hover:text-gray-600 transition-colors"
-                >
-                  <X className="h-5 w-5" />
-                </button>
+                {/* Bottom accent bar */}
+                <div className="h-1 w-full bg-gradient-to-r from-red-300 via-white/60 to-red-300"></div>
               </div>
             </div>
           </div>
         )}
 
-        {/* Personal Information Section - Header Style */}
-        <div className="bg-white shadow-sm border border-gray-200 overflow-hidden">
-          <div className="bg-gray-100 px-6 py-4 border-b border-gray-200">
+        {/* Personal Information Section - Refined Dessert Shop Style */}
+        <div className="bg-white overflow-hidden transition-all duration-300 hover:shadow-lg" style={{
+          border: '1px solid rgba(115, 56, 87, 0.12)',
+          boxShadow: '0 2px 8px rgba(115, 56, 87, 0.04)'
+        }}>
+          <div className="px-4 sm:px-6 py-3 sm:py-4 border-b" style={{
+            background: 'linear-gradient(135deg, rgba(115, 56, 87, 0.03) 0%, rgba(115, 56, 87, 0.01) 100%)',
+            borderColor: 'rgba(115, 56, 87, 0.08)'
+          }}>
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 bg-white border border-gray-200 flex items-center justify-center">
-                <User className="h-5 w-5 text-black" style={{color: '#281c20'}} />
+              <div className="h-9 w-9 sm:h-10 sm:w-10 bg-white flex items-center justify-center transition-transform duration-300 hover:scale-110" style={{
+                border: '1px solid rgba(115, 56, 87, 0.15)',
+                boxShadow: '0 2px 4px rgba(115, 56, 87, 0.08)'
+              }}>
+                <User className="h-4 w-4 sm:h-5 sm:w-5" style={{color: '#733857'}} strokeWidth={1.5} />
               </div>
               <div>
-                <h2 className="text-lg font-bold text-black" style={{color: '#281c20', fontFamily: 'system-ui, -apple-system, sans-serif'}}>Personal Information</h2>
-                <p className="text-sm text-gray-600" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>Your basic details</p>
+                <h2 className="text-base sm:text-lg font-semibold" style={{
+                  color: '#733857',
+                  letterSpacing: '0.01em'
+                }}>Personal Information</h2>
+                <p className="text-xs sm:text-sm" style={{
+                  color: 'rgba(115, 56, 87, 0.6)'}}>Your basic details</p>
               </div>
             </div>
           </div>
           
-          <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="p-4 sm:p-6 grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6" style={{
+            background: 'linear-gradient(to bottom, #FEFEFE 0%, #FCFCFC 100%)'
+          }}>
             {/* Name Field */}
             <div className="space-y-2">
-              <label className="text-sm font-semibold flex items-center gap-2" style={{color: '#281c20', fontFamily: 'system-ui, -apple-system, sans-serif'}}>
-                <User className="h-4 w-4 text-gray-500" />
-                Full Name <span className="text-black">*</span>
+              <label className="text-xs sm:text-sm font-semibold flex items-center gap-2" style={{
+                color: '#733857',
+                letterSpacing: '0.02em'
+              }}>
+                <User className="h-3 w-3 sm:h-4 sm:w-4" style={{color: 'rgba(115, 56, 87, 0.6)'}} strokeWidth={1.5} />
+                Full Name <span style={{color: '#733857'}}>*</span>
               </label>
               <div className="relative group">
                 <input
@@ -1081,103 +1058,132 @@ const Profile = () => {
                   onChange={handleChange}
                   placeholder="Enter your full name"
                   required
-                  readOnly={!isEditMode}
+                  readOnly={false}
                   disabled={isSaving}
-                  className={`w-full px-4 py-3 border ${
-                    isEditMode 
-                      ? 'border-gray-300 focus:border-black bg-white' 
-                      : 'border-gray-200 bg-gray-50'
-                  } focus:ring-2 focus:ring-black transition-all duration-300 outline-none ${
-                    !isEditMode ? 'text-gray-700' : 'text-black'
-                  }`}
-                  style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}
+                  className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 text-sm sm:text-base border transition-all duration-300 outline-none border-gray-300 focus:border-[#733857] bg-white shadow-sm focus:shadow-md text-black`}
+                  style={{
+                    borderRadius: '4px'
+                  }}
                 />
               </div>
             </div>
 
             {/* Gender Field */}
             <div className="space-y-2">
-              <label className="text-sm font-semibold flex items-center gap-2" style={{color: '#281c20', fontFamily: 'system-ui, -apple-system, sans-serif'}}>
-                <User className="h-4 w-4 text-gray-500" />
-                Gender <span className="text-black">*</span>
+              <label className="text-xs sm:text-sm font-semibold flex items-center gap-2" style={{
+                color: '#733857',
+                letterSpacing: '0.02em'
+              }}>
+                <User className="h-3 w-3 sm:h-4 sm:w-4" style={{color: 'rgba(115, 56, 87, 0.6)'}} strokeWidth={1.5} />
+                Gender <span style={{color: '#733857'}}>*</span>
               </label>
               <div className="relative">
                 <select
                   name="gender"
                   value={formData.gender}
                   onChange={handleChange}
-                  disabled={!isEditMode || isSaving}
-                  className={`w-full px-4 py-3 border ${
-                    isEditMode 
-                      ? 'border-gray-300 focus:border-black bg-white' 
-                      : 'border-gray-200 bg-gray-50'
-                  } focus:ring-2 focus:ring-black transition-all duration-300 outline-none appearance-none ${
-                    !isEditMode ? 'text-gray-700' : 'text-black'
-                  }`}
-                  style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}
+                  disabled={isSaving}
+                  className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 text-sm sm:text-base border transition-all duration-300 outline-none appearance-none border-gray-300 focus:border-[#733857] bg-white shadow-sm focus:shadow-md text-black`}
+                  style={{
+                    borderRadius: '4px'
+                  }}
                 >
                   <option value="">Select Gender</option>
                   <option value="male">Male</option>
                   <option value="female">Female</option>
                   <option value="other">Other</option>
                 </select>
-                <ChevronDown className="absolute right-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400 pointer-events-none" />
+                <ChevronDown className="absolute right-3 sm:right-4 top-1/2 transform -translate-y-1/2 h-4 w-4 sm:h-5 sm:w-5 text-gray-400 pointer-events-none" strokeWidth={1.5} />
               </div>
             </div>
           </div>
         </div>
         
-        {/* Verification Section - Header Style */}
-        <div className="bg-white shadow-sm border border-gray-200 overflow-hidden">
-          <div className="bg-gray-100 px-6 py-4 border-b border-gray-200">
+        {/* Verification Section - Refined Style */}
+        <div className="bg-white overflow-hidden transition-all duration-300 hover:shadow-lg" style={{
+          border: '1px solid rgba(115, 56, 87, 0.12)',
+          boxShadow: '0 2px 8px rgba(115, 56, 87, 0.04)'
+        }}>
+          <div className="px-4 sm:px-6 py-3 sm:py-4 border-b" style={{
+            background: 'linear-gradient(135deg, rgba(115, 56, 87, 0.03) 0%, rgba(115, 56, 87, 0.01) 100%)',
+            borderColor: 'rgba(115, 56, 87, 0.08)'
+          }}>
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 bg-white border border-gray-200 flex items-center justify-center">
-                <Shield className="h-5 w-5 text-black" style={{color: '#281c20'}} />
+              <div className="h-9 w-9 sm:h-10 sm:w-10 bg-white flex items-center justify-center transition-transform duration-300 hover:scale-110" style={{
+                border: '1px solid rgba(115, 56, 87, 0.15)',
+                boxShadow: '0 2px 4px rgba(115, 56, 87, 0.08)'
+              }}>
+                <Shield className="h-4 w-4 sm:h-5 sm:w-5" style={{color: '#733857'}} strokeWidth={1.5} />
               </div>
               <div>
-                <h2 className="text-lg font-bold text-black" style={{color: '#281c20', fontFamily: 'system-ui, -apple-system, sans-serif'}}>Verification & Security</h2>
-                <p className="text-sm text-gray-600" style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}>Verify your contact details</p>
+                <h2 className="text-base sm:text-lg font-semibold" style={{
+                  color: '#733857',
+                  letterSpacing: '0.01em'
+                }}>Verification & Security</h2>
+                <p className="text-xs sm:text-sm" style={{
+                  color: 'rgba(115, 56, 87, 0.6)'}}>Verify your contact details</p>
               </div>
             </div>
           </div>
           
-          <div className="p-6 space-y-6">
+          <div className="p-4 sm:p-6 space-y-4 sm:space-y-6" style={{
+            background: 'linear-gradient(to bottom, #FEFEFE 0%, #FCFCFC 100%)'
+          }}>
             {/* Email verification section */}
-            <EmailVerification />
+            <EmailVerification lockEmail={true} />
             
             {/* Phone verification section */}
             <PhoneVerification 
               key={`phone-${user?.phoneVerified}-${user?.phoneVerifiedAt}`}
+              lockPhone={false}
               onVerificationSuccess={() => {
-                console.log('Phone verified - entering edit mode');
-                setIsEditMode(true);
-                localStorage.setItem('profileEditMode', 'true');
+                console.log('Phone verified and saved automatically - staying in view mode');
+                // Don't enter edit mode - phone is already saved
                 setLocalError('');
-                setSuccessMessage('');
+                setSuccessMessage('Phone verified and saved successfully!');
+                // Always-edit mode: do not toggle edit mode
               }}
             />
           </div>
         </div>
         
-        {/* Special Dates Section - Pink Shade */}
-        <div className="bg-white shadow-sm border border-gray-200 overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200" style={{backgroundColor: '#FFF1F2'}}>
+        {/* Special Dates Section - Elegant Pink Theme */}
+        <div className="bg-white overflow-hidden transition-all duration-300 hover:shadow-lg" style={{
+          border: '1px solid rgba(190, 24, 93, 0.15)',
+          boxShadow: '0 2px 8px rgba(190, 24, 93, 0.06)'
+        }}>
+          <div className="px-4 sm:px-6 py-3 sm:py-4 border-b" style={{
+            background: 'linear-gradient(135deg, rgba(255, 241, 242, 0.6) 0%, rgba(255, 251, 252, 0.4) 100%)',
+            borderColor: 'rgba(190, 24, 93, 0.12)'
+          }}>
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 bg-white border border-pink-200 flex items-center justify-center">
-                <Cake className="h-5 w-5" style={{color: '#BE185D'}} />
+              <div className="h-9 w-9 sm:h-10 sm:w-10 bg-white flex items-center justify-center transition-transform duration-300 hover:scale-110" style={{
+                border: '1px solid rgba(190, 24, 93, 0.2)',
+                boxShadow: '0 2px 4px rgba(190, 24, 93, 0.1)'
+              }}>
+                <Cake className="h-4 w-4 sm:h-5 sm:w-5" style={{color: '#BE185D'}} strokeWidth={1.5} />
               </div>
               <div>
-                <h2 className="text-lg font-bold" style={{color: '#BE185D', fontFamily: 'system-ui, -apple-system, sans-serif'}}>Special Dates</h2>
-                <p className="text-sm" style={{color: '#9F1239', fontFamily: 'system-ui, -apple-system, sans-serif'}}>Get special treats on your special days!</p>
+                <h2 className="text-base sm:text-lg font-semibold" style={{
+                  color: '#BE185D',
+                  letterSpacing: '0.01em'
+                }}>Special Dates</h2>
+                <p className="text-xs sm:text-sm" style={{
+                  color: 'rgba(159, 18, 57, 0.7)'}}>Get special treats on your special days!</p>
               </div>
             </div>
           </div>
           
-          <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6" style={{backgroundColor: '#FFFBFC'}}>
+          <div className="p-4 sm:p-6 grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6" style={{
+            background: 'linear-gradient(to bottom, rgba(255, 251, 252, 0.3) 0%, #FFFFFF 100%)'
+          }}>
             {/* Date of Birth Field */}
             <div className="space-y-2">
-              <label className="text-sm font-semibold flex items-center gap-2" style={{color: '#BE185D', fontFamily: 'system-ui, -apple-system, sans-serif'}}>
-                <Calendar className="h-4 w-4" style={{color: '#EC4899'}} />
+              <label className="text-xs sm:text-sm font-semibold flex items-center gap-2" style={{
+                color: '#BE185D',
+                letterSpacing: '0.02em'
+              }}>
+                <Calendar className="h-3 w-3 sm:h-4 sm:w-4" style={{color: '#EC4899'}} strokeWidth={1.5} />
                 Date of Birth <span style={{color: '#BE185D'}}>*</span>
               </label>
               <div className="relative">
@@ -1189,25 +1195,29 @@ const Profile = () => {
                   max={today}
                   readOnly={!isEditMode}
                   disabled={isSaving}
-                  className={`w-full px-4 py-3 border ${
+                  className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 text-sm sm:text-base border transition-all duration-300 outline-none ${
                     isEditMode 
-                      ? 'border-pink-300 focus:border-pink-600 bg-white' 
+                      ? 'border-pink-300 focus:border-pink-600 bg-white shadow-sm focus:shadow-md' 
                       : 'border-pink-200 bg-pink-50'
-                  } focus:ring-2 transition-all duration-300 outline-none ${
-                    !isEditMode ? 'text-gray-700' : 'text-black'
-                  }`}
-                  style={{fontFamily: 'system-ui, -apple-system, sans-serif', '--tw-ring-color': '#EC4899'}}
+                  } ${!isEditMode ? 'text-gray-700' : 'text-black'}`}
+                  style={{
+                    borderRadius: '4px'
+                  }}
                 />
               </div>
-              <p className="text-xs" style={{color: '#9F1239', fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+              <p className="text-[10px] sm:text-xs" style={{
+                color: '#9F1239'}}>
                 We'll send you special birthday treats!
               </p>
             </div>
 
             {/* Date of Anniversary Field */}
             <div className="space-y-2">
-              <label className="text-sm font-semibold flex items-center gap-2" style={{color: '#BE185D', fontFamily: 'system-ui, -apple-system, sans-serif'}}>
-                <Heart className="h-4 w-4" style={{color: '#EC4899'}} />
+              <label className="text-xs sm:text-sm font-semibold flex items-center gap-2" style={{
+                color: '#BE185D',
+                letterSpacing: '0.02em'
+              }}>
+                <Heart className="h-3 w-3 sm:h-4 sm:w-4" style={{color: '#EC4899'}} strokeWidth={1.5} />
                 Anniversary Date
               </label>
               <div className="relative">
@@ -1219,42 +1229,58 @@ const Profile = () => {
                   max={today}
                   readOnly={!isEditMode}
                   disabled={isSaving}
-                  className={`w-full px-4 py-3 border ${
+                  className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 text-sm sm:text-base border transition-all duration-300 outline-none ${
                     isEditMode 
-                      ? 'border-pink-300 focus:border-pink-600 bg-white' 
+                      ? 'border-pink-300 focus:border-pink-600 bg-white shadow-sm focus:shadow-md' 
                       : 'border-pink-200 bg-pink-50'
-                  } focus:ring-2 transition-all duration-300 outline-none ${
-                    !isEditMode ? 'text-gray-700' : 'text-black'
-                  }`}
-                  style={{fontFamily: 'system-ui, -apple-system, sans-serif', '--tw-ring-color': '#EC4899'}}
+                  } ${!isEditMode ? 'text-gray-700' : 'text-black'}`}
+                  style={{
+                    borderRadius: '4px'
+                  }}
                 />
               </div>
-              <p className="text-xs" style={{color: '#9F1239', fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+              <p className="text-[10px] sm:text-xs" style={{
+                color: '#9F1239'}}>
                 Celebrate with special anniversary offers!
               </p>
             </div>
           </div>
         </div>
 
-        {/* Delivery Information Section - Chocolate Shade */}
-        <div className="bg-white shadow-sm border border-gray-200 overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200" style={{backgroundColor: '#F5F3F0'}}>
+        {/* Delivery Information Section - Elegant Chocolate Theme */}
+        <div className="bg-white overflow-hidden transition-all duration-300 hover:shadow-lg" style={{
+          border: '1px solid rgba(107, 68, 35, 0.15)',
+          boxShadow: '0 2px 8px rgba(107, 68, 35, 0.06)'
+        }}>
+          <div className="px-4 sm:px-6 py-3 sm:py-4 border-b" style={{
+            background: 'linear-gradient(135deg, rgba(245, 243, 240, 0.6) 0%, rgba(250, 250, 249, 0.4) 100%)',
+            borderColor: 'rgba(107, 68, 35, 0.12)'
+          }}>
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 bg-white border flex items-center justify-center" style={{borderColor: '#8B7355'}}>
-                <MapPin className="h-5 w-5" style={{color: '#6B4423'}} />
+              <div className="h-9 w-9 sm:h-10 sm:w-10 bg-white flex items-center justify-center transition-transform duration-300 hover:scale-110" style={{
+                border: '1px solid rgba(107, 68, 35, 0.2)',
+                boxShadow: '0 2px 4px rgba(107, 68, 35, 0.1)'
+              }}>
+                <MapPin className="h-4 w-4 sm:h-5 sm:w-5" style={{color: '#6B4423'}} strokeWidth={1.5} />
               </div>
               <div>
-                <h2 className="text-lg font-bold" style={{color: '#6B4423', fontFamily: 'system-ui, -apple-system, sans-serif'}}>Delivery Information</h2>
-                <p className="text-sm" style={{color: '#8B7355', fontFamily: 'system-ui, -apple-system, sans-serif'}}>Where should we deliver your treats?</p>
+                <h2 className="text-base sm:text-lg font-semibold" style={{
+                  color: '#6B4423',
+                  letterSpacing: '0.01em'
+                }}>Delivery Information</h2>
+                <p className="text-xs sm:text-sm" style={{
+                  color: 'rgba(139, 115, 85, 0.8)'}}>Where should we deliver your treats?</p>
               </div>
             </div>
           </div>
           
-          <div className="p-6 space-y-6" style={{backgroundColor: '#FAFAF9'}}>
+          <div className="p-4 sm:p-6 space-y-4 sm:space-y-6" style={{
+            background: 'linear-gradient(to bottom, rgba(250, 250, 249, 0.3) 0%, #FFFFFF 100%)'
+          }}>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Delivery Location */}
               <div className="space-y-2">
-                <label className="text-sm font-semibold flex items-center gap-2" style={{color: '#6B4423', fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+                <label className="text-sm font-semibold flex items-center gap-2" style={{color: '#6B4423'}}>
                   <MapPinned className="h-4 w-4" style={{color: '#8B7355'}} />
                   Delivery Location <span style={{color: '#6B4423'}}>*</span>
                 </label>
@@ -1272,7 +1298,7 @@ const Profile = () => {
                     } focus:ring-2 transition-all duration-300 outline-none appearance-none ${
                       !isEditMode ? 'text-gray-700' : 'text-black'
                     }`}
-                    style={{fontFamily: 'system-ui, -apple-system, sans-serif', borderColor: '#8B7355', '--tw-ring-color': '#6B4423'}}
+                    style={{ borderColor: '#8B7355', '--tw-ring-color': '#6B4423'}}
                   >
                     <option value="">Select delivery location</option>
                     {locations && locations.length > 0 ? (
@@ -1291,7 +1317,7 @@ const Profile = () => {
 
               {/* Country Field */}
               <div className="space-y-2">
-                <label className="text-sm font-semibold flex items-center gap-2" style={{color: '#6B4423', fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+                <label className="text-sm font-semibold flex items-center gap-2" style={{color: '#6B4423'}}>
                   <Flag className="h-4 w-4" style={{color: '#8B7355'}} />
                   Country <span style={{color: '#6B4423'}}>*</span>
                 </label>
@@ -1308,7 +1334,7 @@ const Profile = () => {
                     } focus:ring-2 transition-all duration-300 outline-none appearance-none ${
                       !isEditMode ? 'text-gray-700' : 'text-black'
                     }`}
-                    style={{fontFamily: 'system-ui, -apple-system, sans-serif', borderColor: '#8B7355', '--tw-ring-color': '#6B4423'}}
+                    style={{ borderColor: '#8B7355', '--tw-ring-color': '#6B4423'}}
                   >
                     <option value="India">India</option>
                     <option value="USA">USA</option>
@@ -1323,14 +1349,14 @@ const Profile = () => {
             {/* Hostel Selection */}
             {formData.location && (
               <div className="space-y-2">
-                <label className="text-sm font-semibold flex items-center gap-2" style={{color: '#6B4423', fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+                <label className="text-sm font-semibold flex items-center gap-2" style={{color: '#6B4423'}}>
                   <Building className="h-4 w-4" style={{color: '#8B7355'}} />
                   Hostel/Residence
                   <span className="text-xs font-normal ml-2" style={{color: '#8B7355'}}>(Optional)</span>
                 </label>
                 <div className="relative">
                   {!isEditMode ? (
-                    <div className={`w-full px-4 py-3 border bg-stone-50 text-gray-700`} style={{fontFamily: 'system-ui, -apple-system, sans-serif', borderColor: '#8B7355'}}>
+                    <div className={`w-full px-4 py-3 border bg-stone-50 text-gray-700`} style={{ borderColor: '#8B7355'}}>
                       {(() => {
                         if (!formData.hostel) return 'No hostel selected';
                         if (user?.hostel && typeof user.hostel === 'object' && user.hostel._id === formData.hostel) {
@@ -1350,9 +1376,9 @@ const Profile = () => {
                       onChange={handleChange}
                       disabled={isSaving || hostelsLoading}
                       className={`w-full px-4 py-3 border bg-white focus:border-black focus:ring-2 transition-all duration-300 outline-none appearance-none text-black`}
-                      style={{fontFamily: 'system-ui, -apple-system, sans-serif', borderColor: '#8B7355', '--tw-ring-color': '#6B4423'}}
+                      style={{ borderColor: '#8B7355', '--tw-ring-color': '#6B4423'}}
                     >
-                      <option value="">Select hostel/residence (Optional)</option>
+                      <option value="">Select hostel/residence</option>
                       {hostels && hostels.length > 0 ? (
                         hostels.map(hostel => (
                           <option key={hostel._id} value={hostel._id}>
@@ -1370,7 +1396,7 @@ const Profile = () => {
                     <ChevronDown className="absolute right-4 top-1/2 transform -translate-y-1/2 h-5 w-5" style={{color: '#8B7355'}} />
                   )}
                 </div>
-                <p className="text-xs" style={{color: '#8B7355', fontFamily: 'system-ui, -apple-system, sans-serif'}}>
+                <p className="text-xs" style={{color: '#8B7355'}}>
                   Help us deliver faster
                 </p>
               </div>
@@ -1378,18 +1404,39 @@ const Profile = () => {
           </div>
         </div>
 
-        {/* Action Buttons - Header Style */}
-        {isEditMode && (
-          <div className="profile-save-buttons sticky bottom-16 md:bottom-0 z-[60] -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-6 bg-white border-t border-gray-200">
-            <div className="flex items-center justify-center gap-4 max-w-md mx-auto">
+  {/* Spacer to avoid content being hidden by fixed bar */}
+  {isDirty && (<div className="h-24" />)}
+
+  {/* Action Buttons - Fixed Bottom Bar (only when form is dirty) */}
+        {isDirty && (
+          <div className="profile-save-buttons fixed bottom-0 left-0 right-0 z-[200] px-4 sm:px-6 lg:px-8 py-3 sm:py-4 bg-white/95 backdrop-blur border-t" style={{
+            borderColor: 'rgba(115, 56, 87, 0.18)',
+            boxShadow: '0 -4px 16px rgba(115, 56, 87, 0.12)'
+          }}>
+            <div className="flex items-center justify-center gap-3 sm:gap-4 max-w-md mx-auto">
               <button
                 type="button"
                 onClick={handleCancel}
                 disabled={isSaving}
-                className="flex-1 px-6 py-4 border-2 border-gray-300 hover:border-black transition-all duration-300 font-semibold disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md" style={{color: '#281c20', fontFamily: 'system-ui, -apple-system, sans-serif'}}
+                className="flex-1 px-4 sm:px-6 py-3 sm:py-4 border-2 transition-all duration-300 font-semibold disabled:opacity-50 disabled:cursor-not-allowed text-sm sm:text-base"
+                style={{
+                  borderColor: 'rgba(115, 56, 87, 0.3)',
+                  color: '#733857',
+                  borderRadius: '4px'
+                }}
+                onMouseEnter={(e) => {
+                  if (!isSaving) {
+                    e.currentTarget.style.borderColor = '#733857';
+                    e.currentTarget.style.backgroundColor = 'rgba(115, 56, 87, 0.05)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = 'rgba(115, 56, 87, 0.3)';
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                }}
               >
                 <span className="flex items-center justify-center gap-2">
-                  <X className="h-5 w-5" />
+                  <X className="h-4 w-4 sm:h-5 sm:w-5" strokeWidth={2} />
                   Cancel
                 </span>
               </button>
@@ -1401,18 +1448,34 @@ const Profile = () => {
                   const scrollY = window.scrollY;
                   setTimeout(() => window.scrollTo(0, scrollY), 0);
                 }}
-                className="flex-1 relative px-8 py-4 bg-black text-white overflow-hidden shadow-lg hover:shadow-xl transition-all duration-300 font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{fontFamily: 'system-ui, -apple-system, sans-serif'}}
+                className="flex-1 relative px-6 sm:px-8 py-3 sm:py-4 text-white overflow-hidden transition-all duration-300 font-semibold disabled:opacity-50 disabled:cursor-not-allowed text-sm sm:text-base"
+                style={{
+                  backgroundColor: '#733857',
+                  borderRadius: '4px',
+                  boxShadow: '0 4px 12px rgba(115, 56, 87, 0.25)'
+                }}
+                onMouseEnter={(e) => {
+                  if (!isSaving && formData.name.trim()) {
+                    e.currentTarget.style.backgroundColor = '#5a2b43';
+                    e.currentTarget.style.transform = 'translateY(-2px)';
+                    e.currentTarget.style.boxShadow = '0 6px 16px rgba(115, 56, 87, 0.35)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#733857';
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(115, 56, 87, 0.25)';
+                }}
               >
                 <span className={`relative flex items-center justify-center gap-2 transition-opacity duration-300 ${isSaving ? 'opacity-0' : 'opacity-100'}`}>
-                  <Save className="h-5 w-5" />
+                  <Save className="h-4 w-4 sm:h-5 sm:w-5" strokeWidth={2} />
                   Save Profile
                 </span>
                 {isSaving && (
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className="flex items-center gap-2">
-                      <div className="h-5 w-5 border-2 border-white border-t-transparent animate-spin"></div>
-                      <span className="text-sm font-semibold">Saving...</span>
+                      <div className="h-4 w-4 sm:h-5 sm:w-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      <span className="text-xs sm:text-sm font-semibold">Saving...</span>
                     </div>
                   </div>
                 )}

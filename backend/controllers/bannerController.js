@@ -170,7 +170,7 @@ export const deleteBanner = async (req, res) => {
     }
     
     // Reorder remaining banners
-    await reorderBanners();
+    await reorderBannersHelper();
     
     res.json({
       success: true,
@@ -237,21 +237,16 @@ export const reorderBanners = async (req, res) => {
     
     await Promise.all(updatePromises);
     
-    // If this was called internally (no res object), just return
-    if (!res) return;
-    
     res.json({
       success: true,
       message: 'Banners reordered successfully'
     });
   } catch (error) {
     console.error('Error reordering banners:', error);
-    if (res) {
-      res.status(500).json({
-        success: false,
-        message: 'Failed to reorder banners'
-      });
-    }
+    res.status(500).json({
+      success: false,
+      message: 'Failed to reorder banners'
+    });
   }
 };
 
